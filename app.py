@@ -8,7 +8,26 @@ import random
 st.set_page_config(page_title="Tool Chuẩn Hóa BHXH (CT07)", page_icon="🏥", layout="wide")
 
 st.title("🏥 Tool Chuẩn Hóa Giấy Chứng Nhận Hưởng BHXH (CT07)")
-st.write("Tải lên file Excel để tự động chuẩn hóa `MAU_SO`, `LOAI_GIAYTO`, `SO_CCCD`, `NGAYCAP_CCCD` và lọc bản ghi.")
+st.write("Tải lên file Excel để tự động chuẩn hóa `MAU_SO`, `LOAI_GIAYTO`, `SO_CCCD` (bảo toàn số 0 ở đầu), `NGAYCAP_CCCD` và lọc bản ghi.")
+
+# Hàm làm sạch và bảo toàn số 0 đầu dãy CCCD (đủ 12 chữ số)
+def format_cccd(cccd_str):
+    if pd.isna(cccd_str) or not cccd_str:
+        return ""
+    
+    val = str(cccd_str).strip()
+    
+    # Loại bỏ đuôi .0 nếu bị dính do kiểu float (vd: 96077005028.0)
+    if val.endswith('.0'):
+        val = val[:-2]
+        
+    val = re.sub(r'\D', '', val) # Chỉ giữ lại các chữ số
+    
+    # Nếu là dãy số từ 1 đến 12 chữ số, bù đủ số 0 ở đầu cho đủ 12 chữ số
+    if 0 < len(val) <= 12:
+        return val.zfill(12)
+        
+    return val
 
 # Hàm chuyển đổi định dạng ngày sang YYYYMMDD
 def format_to_yyyymmdd(date_str):
@@ -76,17 +95,18 @@ file_excel = st.file_uploader("📂 Kéo thả hoặc chọn file Excel (CT07) c
 if file_excel:
     if st.button("🚀 Tiến Hành Chuẩn Hóa Dữ Liệu", type="primary"):
         with st.spinner("Đang đọc và xử lý dữ liệu..."):
-            df = pd.read_excel(file_excel, sheet_name=0)
+            # Đọc toàn bộ dữ liệu dưới dạng Chuỗi (dtype=str) để giữ nguyên số 0 ở đầu các cột số
+            df = pd.read_excel(file_excel, sheet_name=0, dtype=str)
 
             # Ép kiểu dữ liệu dạng chuỗi cho các cột cần làm việc
             check_cols = ['SO_CCCD', 'NGAYCAP_CCCD', 'HO_TEN_CHA', 'HO_TEN_ME', 'NGAY_SINH']
             for col in check_cols:
                 if col in df.columns:
-                    df[col] = df[col].astype(str).replace({'nan': '', 'None': ''}).str.strip()
+                    df[col] = df[col].fillna('').astype(str).str.strip()
 
             # Gán giá trị mặc định cho MAU_SO và LOAI_GIAYTO
             df['MAU_SO'] = 'CT07'
-            df['LOAI_GIAYTO'] = 1
+            df['LOAI_GIAYTO'] = '1'
 
             rows_to_keep = []
             count_fixed_cccd = 0
@@ -99,9 +119,15 @@ if file_excel:
                 if 'NGAYCAP_CCCD' in df.columns and df.at[idx, 'NGAYCAP_CCCD']:
                     df.at[idx, 'NGAYCAP_CCCD'] = format_to_yyyymmdd(df.at[idx, 'NGAYCAP_CCCD'])
 
-                # 2. Xử lý CCCD
-                cccd_val = str(df.at[idx, 'SO_CCCD']).strip()
-                has_cccd = bool(cccd_val and cccd_val.lower() not in ['', 'nan'])
+                # 2. Xử lý & bảo toàn số 0 ở đầu cho SO_CCCD hiện có
+                cccd_raw = df.at[idx, 'SO_CCCD'] if 'SO_CCCD' in df.columns else ''
+                cccd_val = format_cccd(cccd_raw)
+                
+                if cccd_val:
+                    df.at[idx, 'SO_CCCD'] = cccd_val
+                    has_cccd = True
+                else:
+                    has_cccd = False
 
                 # Nếu chưa có SO_CCCD, trích xuất từ Bố hoặc Mẹ
                 if not has_cccd:
@@ -113,7 +139,7 @@ if file_excel:
                         cccd_ext, date_ext = extract_cccd_and_date(text_me)
                     
                     if cccd_ext:
-                        df.at[idx, 'SO_CCCD'] = cccd_ext
+                        df.at[idx, 'SO_CCCD'] = format_cccd(cccd_ext)
                         if date_ext and ('NGAYCAP_CCCD' in df.columns):
                             df.at[idx, 'NGAYCAP_CCCD'] = date_ext
                         count_fixed_cccd += 1
@@ -148,10 +174,10 @@ if file_excel:
             deleted_rows_count = total_before - len(df)
 
             # Đánh lại STT liên tục
-            df['STT'] = range(1, len(df) + 1)
+            df['STT'] = [str(i) for i in range(1, len(df) + 1)]
 
             # Thông báo kết quả
-            st.success("✅ Đã xử lý hoàn tất!")
+            st.success("✅ Đã xử lý hoàn tất! Đã bảo toàn đầy đủ số 0 ở đầu dãy CCCD.")
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("✨ Bổ sung CCCD từ Bố/Mẹ", f"{count_fixed_cccd} dòng")
             c2.metric("📅 Bổ sung Ngày Cấp theo Tuổi", f"{count_fixed_ngaycap} dòng")
