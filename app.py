@@ -33,6 +33,11 @@ if file_excel:
             # Đọc dữ liệu từ sheet đầu tiên
             df = pd.read_excel(file_excel, sheet_name=0)
 
+            # 🛠️ SỬA LỖI: Ép kiểu toàn bộ các cột liên quan sang Chuỗi (object/str) để tránh lỗi dtypes
+            for col in ['SO_CCCD', 'NGAYCAP_CCCD', 'HO_TEN_CHA', 'HO_TEN_ME']:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).replace({'nan': '', 'None': ''})
+
             # Quy tắc 1 & 2: Gán MAU_SO = 'CT07' và LOAI_GIAYTO = 1
             df['MAU_SO'] = 'CT07'
             df['LOAI_GIAYTO'] = 1
@@ -42,8 +47,8 @@ if file_excel:
             for idx in df.index:
                 cccd_val = str(df.at[idx, 'SO_CCCD']).strip() if pd.notna(df.at[idx, 'SO_CCCD']) else ''
                 
-                # Nếu CCCD trống hoặc bằng 'nan'
-                if not cccd_val or cccd_val.lower() == 'nan':
+                # Nếu CCCD trống
+                if not cccd_val or cccd_val.lower() in ['', 'nan']:
                     text_cha = str(df.at[idx, 'HO_TEN_CHA']) if pd.notna(df.at[idx, 'HO_TEN_CHA']) else ''
                     text_me = str(df.at[idx, 'HO_TEN_ME']) if pd.notna(df.at[idx, 'HO_TEN_ME']) else ''
                     
@@ -62,7 +67,7 @@ if file_excel:
             # Thông báo thành công
             st.success(f"✅ Đã xử lý hoàn tất! Bổ sung thành công CCCD cho **{count_fixed}** trường hợp bị thiếu.")
 
-            # Tạo file kết quả lưu trong bộ nhớ tạm
+            # Tạo file kết quả
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, sheet_name='Dulieu_DaChuanHoa', index=False)
