@@ -52,8 +52,8 @@ def parse_birth_date(date_str):
         return year, f"{year}{month:02d}{day:02d}"
     m2 = re.search(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', date_str)
     if m2:
-        year, month, day = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
-        return year, f"{year}{month:02d}{day:02d}"
+        year, month, day = m2.groups()
+        return f"{year}{int(month):02d}{int(day):02d}"
     return None, None
 
 # Hàm trích xuất CCCD và Ngày cấp từ chuỗi Bố/Mẹ
@@ -166,7 +166,7 @@ if file_excel:
                     else:
                         has_cccd = False
 
-                    # Trích xuất CCCD từ Bố/Mẹ nếu chưa có
+                    # Trích xuất CCCD từ Bố/Mẹ nếu bản thân chưa có
                     if not has_cccd:
                         text_cha = df.at[idx, 'HO_TEN_CHA'] if 'HO_TEN_CHA' in df.columns else ''
                         text_me = df.at[idx, 'HO_TEN_ME'] if 'HO_TEN_ME' in df.columns else ''
@@ -183,12 +183,17 @@ if file_excel:
                                 changes.append(f"Trích xuất Ngày cấp từ Bố/Mẹ: {date_ext}")
                             has_cccd = True
 
-                    # ⚠️ YÊU CẦU MỚI: Nếu SO_CCCD không đủ 12 số -> Không chỉnh sửa dòng đó, ghi log để hiển thị
                     curr_cccd = str(df.at[idx, 'SO_CCCD']).strip()
-                    if len(curr_cccd) != 12:
-                        changes.append(f"⚠️ KHÔNG CHỈNH SỬA: Số CCCD không đủ 12 số ({curr_cccd})")
 
-                    # 3. Bổ sung Ngày cấp nếu đã có CCCD đủ 12 số nhưng thiếu Ngày cấp
+                    # 📌 TH1: Bị trống SO_CCCD (và cũng không lấy được từ Bố/Mẹ) -> Xóa dòng
+                    if not curr_cccd or curr_cccd.lower() in ['', 'nan']:
+                        continue  # Không lưu dòng này
+
+                    # 📌 TH2: Có SO_CCCD nhưng không đủ 12 số -> Giữ nguyên, hiển thị cảnh báo
+                    if len(curr_cccd) != 12:
+                        changes.append(f"⚠️ CẢNH BÁO: Số CCCD không đủ 12 số (Hiện có {len(curr_cccd)} số: '{curr_cccd}') - Giữ nguyên không chỉnh sửa")
+
+                    # 📌 TH3: Đủ 12 số CCCD -> Bổ sung Ngày cấp nếu bị thiếu
                     elif 'NGAYCAP_CCCD' in df.columns:
                         ngaycap_val = str(df.at[idx, 'NGAYCAP_CCCD']).strip()
                         if not ngaycap_val or ngaycap_val.lower() in ['', 'nan']:
@@ -205,7 +210,7 @@ if file_excel:
 
                     rows_to_keep.append(idx)
 
-                    # Lưu log nếu dòng có chỉnh sửa hoặc báo không đủ số CCCD
+                    # Lưu log nếu dòng có chỉnh sửa hoặc báo cảnh báo CCCD không đủ số
                     if changes:
                         modified_rows_log.append({
                             'STT': df.at[idx, 'STT'] if 'STT' in df.columns else str(idx + 1),
@@ -223,11 +228,11 @@ if file_excel:
             st.success("✅ Đã xử lý chuẩn hóa dữ liệu thành công!")
             c1, c2, c3 = st.columns(3)
             c1.metric("📊 Dòng ban đầu", f"{total_before} dòng")
-            c2.metric("🛠️ Dòng có chỉnh sửa / Cảnh báo", f"{len(modified_rows_log)} dòng")
-            c3.metric("✨ Dòng xuất ra", f"{len(df)} dòng")
+            c2.metric("🗑️ Dòng bị xóa (Trống CCCD & Cha/Mẹ)", f"{total_before - len(df)} dòng")
+            c3.metric("✨ Dòng hợp lệ xuất ra", f"{len(df)} dòng")
 
             # HIỂN THỊ CÁC DÒNG CÓ CHỈNH SỬA / BỊ BÁO KHÔNG ĐỦ SỐ CCCD
-            st.subheader("📝 Bảng danh sách các dòng có chỉnh sửa hoặc không đủ số CCCD:")
+            st.subheader("📝 Bảng danh sách các dòng có chỉnh sửa hoặc cảnh báo CCCD không đủ số:")
             if modified_rows_log:
                 st.dataframe(pd.DataFrame(modified_rows_log), use_container_width=True)
             else:
