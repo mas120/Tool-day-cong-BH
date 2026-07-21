@@ -10,7 +10,7 @@ st.set_page_config(page_title="Tool Chuẩn Hóa BHXH (CT07 & CT03)", page_icon=
 st.title("🏥 Tool Chuẩn Hóa Dữ Liệu BHXH (CT07 & CT03)")
 st.write("Chọn mẫu giấy tờ cần xử lý và tải file Excel lên để hệ thống tự động chuẩn hóa.")
 
-# Hàm làm sạch và bảo toàn số 0 đầu dãy CCCD (đủ 12 chữ số)
+# Hàm làm sạch và kiểm tra CCCD đủ 12 chữ số
 def format_cccd(cccd_str):
     if pd.isna(cccd_str) or not cccd_str:
         return ""
@@ -82,7 +82,7 @@ if file_excel:
 
             total_before = len(df)
             rows_to_keep = []
-            modified_rows_log = []  # Danh sách ghi nhận các dòng có chỉnh sửa
+            modified_rows_log = []  # Danh sách ghi nhận các dòng có chỉnh sửa / cảnh báo
 
             # ==========================================
             # XỬ LÝ MẪU CT03 (GIẤY RA VIỆN)
@@ -93,29 +93,24 @@ if file_excel:
                     bhxh_val = df.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df.columns else ''
                     the_val = df.at[idx, 'MA_THE'] if 'MA_THE' in df.columns else ''
                     
-                    # Quy tắc 1: Xóa dòng nếu CẢ MA_SOBHXH VÀ MA_THE đều trống
                     if (not bhxh_val or bhxh_val.lower() == 'nan') and (not the_val or the_val.lower() == 'nan'):
-                        continue  # Bỏ qua dòng này
+                        continue
                     
-                    # Quy tắc 2: TEKT = 0
                     if 'TEKT' in df.columns and df.at[idx, 'TEKT'] != '0':
                         df.at[idx, 'TEKT'] = '0'
                         changes.append("Gán TEKT = 0")
 
-                    # Xử lý CCCD & LOAI_GIAYTO
                     cccd_raw = df.at[idx, 'SO_CCCD'] if 'SO_CCCD' in df.columns else ''
                     cccd_val = format_cccd(cccd_raw)
                     if df.at[idx, 'SO_CCCD'] != cccd_val:
                         df.at[idx, 'SO_CCCD'] = cccd_val
                         changes.append(f"Chuẩn hóa CCCD: {cccd_val}")
 
-                    # Quy tắc 3: LOAI_GIAYTO = 1 nếu có SO_CCCD, ngược lại = 0
                     new_lg = '1' if cccd_val else '0'
                     if 'LOAI_GIAYTO' in df.columns and df.at[idx, 'LOAI_GIAYTO'] != new_lg:
                         df.at[idx, 'LOAI_GIAYTO'] = new_lg
                         changes.append(f"Gán LOAI_GIAYTO = {new_lg}")
 
-                    # Quy tắc 4: Sửa SO_SERI (xóa 1 số 0 trong chuỗi 2600 -> 260)
                     if 'SO_SERI' in df.columns and df.at[idx, 'SO_SERI']:
                         old_seri = df.at[idx, 'SO_SERI']
                         new_seri = re.sub(r'2600', '260', old_seri)
@@ -123,7 +118,6 @@ if file_excel:
                             df.at[idx, 'SO_SERI'] = new_seri
                             changes.append(f"Sửa Seri: {old_seri} -> {new_seri}")
 
-                    # Định dạng lại NGAYCAP_CCCD nếu có
                     if 'NGAYCAP_CCCD' in df.columns and df.at[idx, 'NGAYCAP_CCCD']:
                         old_nc = df.at[idx, 'NGAYCAP_CCCD']
                         new_nc = format_to_yyyymmdd(old_nc)
@@ -133,13 +127,12 @@ if file_excel:
 
                     rows_to_keep.append(idx)
 
-                    # Lưu log nếu dòng có chỉnh sửa
                     if changes:
                         modified_rows_log.append({
                             'STT': df.at[idx, 'STT'] if 'STT' in df.columns else str(idx + 1),
                             'Họ và Tên': df.at[idx, 'HO_TEN'] if 'HO_TEN' in df.columns else '',
                             'Mã BHXH': df.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df.columns else '',
-                            'Chi tiết thay đổi': " | ".join(changes)
+                            'Trạng thái / Nội dung': " | ".join(changes)
                         })
 
             # ==========================================
@@ -153,7 +146,7 @@ if file_excel:
                 for idx in df.index:
                     changes = []
 
-                    # 1. Chuẩn hóa Ngày cấp
+                    # 1. Chuẩn hóa Ngày cấp nếu có sẵn
                     if 'NGAYCAP_CCCD' in df.columns and df.at[idx, 'NGAYCAP_CCCD']:
                         old_date = df.at[idx, 'NGAYCAP_CCCD']
                         new_date = format_to_yyyymmdd(old_date)
@@ -173,7 +166,7 @@ if file_excel:
                     else:
                         has_cccd = False
 
-                    # Trích xuất CCCD từ Bố/Mẹ
+                    # Trích xuất CCCD từ Bố/Mẹ nếu chưa có
                     if not has_cccd:
                         text_cha = df.at[idx, 'HO_TEN_CHA'] if 'HO_TEN_CHA' in df.columns else ''
                         text_me = df.at[idx, 'HO_TEN_ME'] if 'HO_TEN_ME' in df.columns else ''
@@ -190,8 +183,13 @@ if file_excel:
                                 changes.append(f"Trích xuất Ngày cấp từ Bố/Mẹ: {date_ext}")
                             has_cccd = True
 
-                    # 3. Bổ sung Ngày cấp nếu có CCCD nhưng thiếu Ngày cấp
-                    if has_cccd and 'NGAYCAP_CCCD' in df.columns:
+                    # ⚠️ YÊU CẦU MỚI: Nếu SO_CCCD không đủ 12 số -> Không chỉnh sửa dòng đó, ghi log để hiển thị
+                    curr_cccd = str(df.at[idx, 'SO_CCCD']).strip()
+                    if len(curr_cccd) != 12:
+                        changes.append(f"⚠️ KHÔNG CHỈNH SỬA: Số CCCD không đủ 12 số ({curr_cccd})")
+
+                    # 3. Bổ sung Ngày cấp nếu đã có CCCD đủ 12 số nhưng thiếu Ngày cấp
+                    elif 'NGAYCAP_CCCD' in df.columns:
                         ngaycap_val = str(df.at[idx, 'NGAYCAP_CCCD']).strip()
                         if not ngaycap_val or ngaycap_val.lower() in ['', 'nan']:
                             birth_str = df.at[idx, 'NGAY_SINH'] if 'NGAY_SINH' in df.columns else ''
@@ -205,37 +203,35 @@ if file_excel:
                                     df.at[idx, 'NGAYCAP_CCCD'] = birth_formatted
                                 changes.append(f"Tự động điền Ngày cấp (Tuổi {age}): {df.at[idx, 'NGAYCAP_CCCD']}")
 
-                    if has_cccd:
-                        rows_to_keep.append(idx)
+                    rows_to_keep.append(idx)
 
-                    # Lưu log nếu dòng có chỉnh sửa
+                    # Lưu log nếu dòng có chỉnh sửa hoặc báo không đủ số CCCD
                     if changes:
                         modified_rows_log.append({
                             'STT': df.at[idx, 'STT'] if 'STT' in df.columns else str(idx + 1),
                             'Họ và Tên': df.at[idx, 'HO_TEN'] if 'HO_TEN' in df.columns else '',
                             'Mã BHXH': df.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df.columns else '',
-                            'Chi tiết thay đổi': " | ".join(changes)
+                            'Số CCCD': df.at[idx, 'SO_CCCD'] if 'SO_CCCD' in df.columns else '',
+                            'Trạng thái / Nội dung': " | ".join(changes)
                         })
 
             # Lọc lại DataFrame và đánh lại STT
             df = df.loc[rows_to_keep].copy()
-            deleted_count = total_before - len(df)
             df['STT'] = [str(i) for i in range(1, len(df) + 1)]
 
             # Thông báo kết quả
             st.success("✅ Đã xử lý chuẩn hóa dữ liệu thành công!")
             c1, c2, c3 = st.columns(3)
             c1.metric("📊 Dòng ban đầu", f"{total_before} dòng")
-            c2.metric("🛠️ Dòng có chỉnh sửa", f"{len(modified_rows_log)} dòng")
+            c2.metric("🛠️ Dòng có chỉnh sửa / Cảnh báo", f"{len(modified_rows_log)} dòng")
             c3.metric("✨ Dòng xuất ra", f"{len(df)} dòng")
 
-            # HIỂN THỊ DANH SÁCH CÁC DÒNG ĐÃ CHỈNH SỬA
-            st.subheader("📝 Danh sách các dòng đã được chỉnh sửa / bổ sung:")
+            # HIỂN THỊ CÁC DÒNG CÓ CHỈNH SỬA / BỊ BÁO KHÔNG ĐỦ SỐ CCCD
+            st.subheader("📝 Bảng danh sách các dòng có chỉnh sửa hoặc không đủ số CCCD:")
             if modified_rows_log:
-                df_log = pd.DataFrame(modified_rows_log)
-                st.dataframe(df_log, use_container_width=True)
+                st.dataframe(pd.DataFrame(modified_rows_log), use_container_width=True)
             else:
-                st.info("Không có dòng nào có sự thay đổi dữ liệu!")
+                st.info("Tất cả các dòng đều hợp lệ và không có sự thay đổi dữ liệu!")
 
             # Xuất file Excel
             output = io.BytesIO()
@@ -246,10 +242,7 @@ if file_excel:
             st.download_button(
                 label="📥 Tải Về File Kết Quả (Excel)",
                 data=output,
-                file_name="GiayRaVien_BHXH_DaChuanHoa.xlsx" if "CT03" in option_mau else "GiayChungNhan_BHXH_DaChuanHoa.xlsx",
+                file_name="GiayChungNhan_DaChuanHoa.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary"
             )
-
-            st.subheader("📋 Xem trước 10 dòng dữ liệu đầu tiên:")
-            st.dataframe(df.head(10), use_container_width=True)
