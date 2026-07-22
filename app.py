@@ -41,14 +41,14 @@ def format_to_yyyymmdd(date_str):
         return f"{year}{int(month):02d}{int(day):02d}"
     return date_str
 
-# Hàm lấy chuỗi Ngày/Tháng/Năm từ cột NGAY_CT để đặt tên file (Ví dụ: 18/07/2026 -> 18072026)
+# Hàm lấy chuỗi Ngày/Tháng/Năm từ cột NGAY_CT để tạo tên file
 def get_clean_date_str(df):
     if 'NGAY_CT' in df.columns:
         first_valid_date = df['NGAY_CT'].dropna().astype(str).str.strip()
         first_valid_date = first_valid_date[first_valid_date != ''].first_valid_index()
         if first_valid_date is not None:
             raw_date = df.at[first_valid_date, 'NGAY_CT']
-            clean_str = re.sub(r'\D', '', str(raw_date))  # Chỉ giữ lại các chữ số
+            clean_str = re.sub(r'\D', '', str(raw_date))
             if len(clean_str) >= 8:
                 return clean_str[:8]
     return ""
@@ -94,7 +94,8 @@ if file_excel:
 
             total_before = len(df)
             rows_to_keep = []
-            modified_rows_log = []
+            modified_rows_log = []  # Nhập ký các dòng có chỉnh sửa / cảnh báo
+            deleted_rows_log = []   # Nhật ký các dòng bị xóa
 
             # ==========================================
             # XỬ LÝ MẪU CT03 (GIẤY RA VIỆN)
@@ -105,7 +106,15 @@ if file_excel:
                     bhxh_val = df.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df.columns else ''
                     the_val = df.at[idx, 'MA_THE'] if 'MA_THE' in df.columns else ''
                     
+                    # ❌ XÓA DÒNG: Nếu CẢ MA_SOBHXH VÀ MA_THE đều trống
                     if (not bhxh_val or bhxh_val.lower() == 'nan') and (not the_val or the_val.lower() == 'nan'):
+                        deleted_rows_log.append({
+                            'STT Gốc': df.at[idx, 'STT'] if 'STT' in df.columns else str(idx + 1),
+                            'Họ và Tên': df.at[idx, 'HO_TEN'] if 'HO_TEN' in df.columns else '',
+                            'Mã BHXH': bhxh_val,
+                            'Mã Thẻ': the_val,
+                            'Lý do xóa': 'Trống cả Mã số BHXH lẫn Mã thẻ BHYT'
+                        })
                         continue
                     
                     if 'TEKT' in df.columns and df.at[idx, 'TEKT'] != '0':
@@ -197,15 +206,21 @@ if file_excel:
 
                     curr_cccd = str(df.at[idx, 'SO_CCCD']).strip()
 
-                    # TH1: Bị trống SO_CCCD (và cũng không lấy được từ Bố/Mẹ) -> Xóa dòng
+                    # ❌ XÓA DÒNG: Nếu trống SO_CCCD và không lấy được từ Bố/Mẹ
                     if not curr_cccd or curr_cccd.lower() in ['', 'nan']:
+                        deleted_rows_log.append({
+                            'STT Gốc': df.at[idx, 'STT'] if 'STT' in df.columns else str(idx + 1),
+                            'Họ và Tên': df.at[idx, 'HO_TEN'] if 'HO_TEN' in df.columns else '',
+                            'Mã BHXH': df.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df.columns else '',
+                            'Lý do xóa': 'Trống số CCCD (và không trích xuất được từ Bố/Mẹ)'
+                        })
                         continue
 
-                    # TH2: Có SO_CCCD nhưng không đủ 12 số -> Giữ nguyên, hiển thị cảnh báo
+                    # ⚠️ CẢNH BÁO: Số CCCD không đủ 12 số
                     if len(curr_cccd) != 12:
                         changes.append(f"⚠️ CẢNH BÁO: Số CCCD không đủ 12 số (Hiện có {len(curr_cccd)} số: '{curr_cccd}') - Giữ nguyên không chỉnh sửa")
 
-                    # TH3: Đủ 12 số CCCD -> Bổ sung Ngày cấp nếu bị thiếu
+                    # Bổ sung Ngày cấp nếu bị thiếu
                     elif 'NGAYCAP_CCCD' in df.columns:
                         ngaycap_val = str(df.at[idx, 'NGAYCAP_CCCD']).strip()
                         if not ngaycap_val or ngaycap_val.lower() in ['', 'nan']:
@@ -231,7 +246,7 @@ if file_excel:
                             'Trạng thái / Nội dung': " | ".join(changes)
                         })
 
-            # Lọc lại DataFrame và đánh lại STT
+            # Lọc lại DataFrame và đánh lại STT liên tục
             df = df.loc[rows_to_keep].copy()
             df['STT'] = [str(i) for i in range(1, len(df) + 1)]
 
@@ -246,15 +261,23 @@ if file_excel:
             st.success("✅ Đã xử lý chuẩn hóa dữ liệu thành công!")
             c1, c2, c3 = st.columns(3)
             c1.metric("📊 Dòng ban đầu", f"{total_before} dòng")
-            c2.metric("🗑️ Dòng bị xóa", f"{total_before - len(df)} dòng")
+            c2.metric("🗑️ Dòng bị xóa", f"{len(deleted_rows_log)} dòng")
             c3.metric("✨ Dòng hợp lệ xuất ra", f"{len(df)} dòng")
 
-            # HIỂN THỊ CÁC DÒNG CÓ CHỈNH SỬA / CẢNH BÁO
-            st.subheader("📝 Bảng danh sách các dòng có chỉnh sửa hoặc cảnh báo CCCD không đủ số:")
-            if modified_rows_log:
-                st.dataframe(pd.DataFrame(modified_rows_log), use_container_width=True)
-            else:
-                st.info("Tất cả các dòng đều hợp lệ và không có sự thay đổi dữ liệu!")
+            # HIỂN THỊ CÁC TAB BẢNG NHẬT KÝ
+            tab1, tab2 = st.tabs(["📝 Dòng có Chỉnh sửa / Cảnh báo", "🗑️ Danh sách Dòng bị Xóa"])
+            
+            with tab1:
+                if modified_rows_log:
+                    st.dataframe(pd.DataFrame(modified_rows_log), use_container_width=True)
+                else:
+                    st.info("Tất cả các dòng xuất ra đều hợp lệ và không có sự thay đổi dữ liệu!")
+
+            with tab2:
+                if deleted_rows_log:
+                    st.dataframe(pd.DataFrame(deleted_rows_log), use_container_width=True)
+                else:
+                    st.info("Không có dòng nào bị xóa!")
 
             # Xuất file Excel
             output = io.BytesIO()
