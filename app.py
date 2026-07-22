@@ -41,6 +41,18 @@ def format_to_yyyymmdd(date_str):
         return f"{year}{int(month):02d}{int(day):02d}"
     return date_str
 
+# Hàm lấy chuỗi Ngày/Tháng/Năm từ cột NGAY_CT để đặt tên file (Ví dụ: 18/07/2026 -> 18072026)
+def get_clean_date_str(df):
+    if 'NGAY_CT' in df.columns:
+        first_valid_date = df['NGAY_CT'].dropna().astype(str).str.strip()
+        first_valid_date = first_valid_date[first_valid_date != ''].first_valid_index()
+        if first_valid_date is not None:
+            raw_date = df.at[first_valid_date, 'NGAY_CT']
+            clean_str = re.sub(r'\D', '', str(raw_date))  # Chỉ giữ lại các chữ số
+            if len(clean_str) >= 8:
+                return clean_str[:8]
+    return ""
+
 # Hàm trích xuất Năm sinh và chuỗi YYYYMMDD
 def parse_birth_date(date_str):
     if pd.isna(date_str) or not date_str:
@@ -52,8 +64,8 @@ def parse_birth_date(date_str):
         return year, f"{year}{month:02d}{day:02d}"
     m2 = re.search(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', date_str)
     if m2:
-        year, month, day = m2.groups()
-        return f"{year}{int(month):02d}{int(day):02d}"
+        year, month, day = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
+        return year, f"{year}{month:02d}{day:02d}"
     return None, None
 
 # Hàm trích xuất CCCD và Ngày cấp từ chuỗi Bố/Mẹ
@@ -82,7 +94,7 @@ if file_excel:
 
             total_before = len(df)
             rows_to_keep = []
-            modified_rows_log = []  # Danh sách ghi nhận các dòng có chỉnh sửa / cảnh báo
+            modified_rows_log = []
 
             # ==========================================
             # XỬ LÝ MẪU CT03 (GIẤY RA VIỆN)
@@ -185,15 +197,15 @@ if file_excel:
 
                     curr_cccd = str(df.at[idx, 'SO_CCCD']).strip()
 
-                    # 📌 TH1: Bị trống SO_CCCD (và cũng không lấy được từ Bố/Mẹ) -> Xóa dòng
+                    # TH1: Bị trống SO_CCCD (và cũng không lấy được từ Bố/Mẹ) -> Xóa dòng
                     if not curr_cccd or curr_cccd.lower() in ['', 'nan']:
-                        continue  # Không lưu dòng này
+                        continue
 
-                    # 📌 TH2: Có SO_CCCD nhưng không đủ 12 số -> Giữ nguyên, hiển thị cảnh báo
+                    # TH2: Có SO_CCCD nhưng không đủ 12 số -> Giữ nguyên, hiển thị cảnh báo
                     if len(curr_cccd) != 12:
                         changes.append(f"⚠️ CẢNH BÁO: Số CCCD không đủ 12 số (Hiện có {len(curr_cccd)} số: '{curr_cccd}') - Giữ nguyên không chỉnh sửa")
 
-                    # 📌 TH3: Đủ 12 số CCCD -> Bổ sung Ngày cấp nếu bị thiếu
+                    # TH3: Đủ 12 số CCCD -> Bổ sung Ngày cấp nếu bị thiếu
                     elif 'NGAYCAP_CCCD' in df.columns:
                         ngaycap_val = str(df.at[idx, 'NGAYCAP_CCCD']).strip()
                         if not ngaycap_val or ngaycap_val.lower() in ['', 'nan']:
@@ -210,7 +222,6 @@ if file_excel:
 
                     rows_to_keep.append(idx)
 
-                    # Lưu log nếu dòng có chỉnh sửa hoặc báo cảnh báo CCCD không đủ số
                     if changes:
                         modified_rows_log.append({
                             'STT': df.at[idx, 'STT'] if 'STT' in df.columns else str(idx + 1),
@@ -224,14 +235,21 @@ if file_excel:
             df = df.loc[rows_to_keep].copy()
             df['STT'] = [str(i) for i in range(1, len(df) + 1)]
 
+            # Lấy chuỗi ngày tháng từ cột NGAY_CT để tạo tên file
+            date_suffix = get_clean_date_str(df)
+            if date_suffix:
+                output_filename = f"GiayRaVien_BHXH_{date_suffix}.xlsx" if "CT03" in option_mau else f"GiayChungNhan_BHXH_{date_suffix}.xlsx"
+            else:
+                output_filename = "GiayRaVien_BHXH_DaChuanHoa.xlsx" if "CT03" in option_mau else "GiayChungNhan_BHXH_DaChuanHoa.xlsx"
+
             # Thông báo kết quả
             st.success("✅ Đã xử lý chuẩn hóa dữ liệu thành công!")
             c1, c2, c3 = st.columns(3)
             c1.metric("📊 Dòng ban đầu", f"{total_before} dòng")
-            c2.metric("🗑️ Dòng bị xóa (Trống CCCD & Cha/Mẹ)", f"{total_before - len(df)} dòng")
+            c2.metric("🗑️ Dòng bị xóa", f"{total_before - len(df)} dòng")
             c3.metric("✨ Dòng hợp lệ xuất ra", f"{len(df)} dòng")
 
-            # HIỂN THỊ CÁC DÒNG CÓ CHỈNH SỬA / BỊ BÁO KHÔNG ĐỦ SỐ CCCD
+            # HIỂN THỊ CÁC DÒNG CÓ CHỈNH SỬA / CẢNH BÁO
             st.subheader("📝 Bảng danh sách các dòng có chỉnh sửa hoặc cảnh báo CCCD không đủ số:")
             if modified_rows_log:
                 st.dataframe(pd.DataFrame(modified_rows_log), use_container_width=True)
@@ -245,9 +263,9 @@ if file_excel:
             output.seek(0)
 
             st.download_button(
-                label="📥 Tải Về File Kết Quả (Excel)",
+                label=f"📥 Tải Về File Kết Quả ({output_filename})",
                 data=output,
-                file_name="GiayChungNhan_DaChuanHoa.xlsx",
+                file_name=output_filename,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary"
             )
