@@ -94,8 +94,9 @@ if file_excel:
 
             total_before = len(df)
             rows_to_keep = []
-            modified_rows_log = []  # Nhập ký các dòng có chỉnh sửa / cảnh báo
+            modified_rows_log = []  # Nhật ký các dòng có chỉnh sửa / cảnh báo
             deleted_rows_log = []   # Nhật ký các dòng bị xóa
+            current_year = 2026
 
             # ==========================================
             # XỬ LÝ MẪU CT03 (GIẤY RA VIỆN)
@@ -146,6 +147,18 @@ if file_excel:
                             df.at[idx, 'NGAYCAP_CCCD'] = new_nc
                             changes.append(f"Sửa Ngày cấp: {old_nc} -> {new_nc}")
 
+                    # ⚠️ CẢNH BÁO MỚI: Bệnh nhân dưới 7 tuổi nhưng trống ô HO_TEN_CHA và HO_TEN_ME
+                    birth_str = df.at[idx, 'NGAY_SINH'] if 'NGAY_SINH' in df.columns else ''
+                    birth_year, _ = parse_birth_date(birth_str)
+                    
+                    if birth_year:
+                        age = current_year - birth_year
+                        if age < 7:
+                            text_cha = df.at[idx, 'HO_TEN_CHA'] if 'HO_TEN_CHA' in df.columns else ''
+                            text_me = df.at[idx, 'HO_TEN_ME'] if 'HO_TEN_ME' in df.columns else ''
+                            if (not text_cha or text_cha.lower() == 'nan') and (not text_me or text_me.lower() == 'nan'):
+                                changes.append(f"⚠️ CẢNH BÁO: Bệnh nhân {age} tuổi (<7t) nhưng trống cả Họ tên Cha lẫn Mẹ")
+
                     rows_to_keep.append(idx)
 
                     if changes:
@@ -162,7 +175,6 @@ if file_excel:
             else:
                 df['MAU_SO'] = 'CT07'
                 df['LOAI_GIAYTO'] = '1'
-                current_year = 2026
 
                 for idx in df.index:
                     changes = []
