@@ -64,8 +64,8 @@ def parse_birth_date(date_str):
         return year, f"{year}{month:02d}{day:02d}"
     m2 = re.search(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', date_str)
     if m2:
-        year, month, day = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
-        return year, f"{year}{month:02d}{day:02d}"
+        year, month, day = m2.groups()
+        return f"{year}{int(month):02d}{int(day):02d}"
     return None, None
 
 # Hàm trích xuất CCCD và Ngày cấp từ chuỗi Bố/Mẹ
@@ -85,6 +85,11 @@ file_excel = st.file_uploader("📂 Kéo thả hoặc chọn file Excel cần x�
 
 if file_excel:
     if st.button("🚀 Tiến Hành Chuẩn Hóa Dữ Liệu", type="primary"):
+        # Reset lại session state khi bấm nút chạy file mới
+        for key in ['df_clean', 'modified_indices', 'deleted_rows_log']:
+            if key in st.session_state:
+                del st.session_state[key]
+
         with st.spinner("Đang đọc và xử lý dữ liệu..."):
             df = pd.read_excel(file_excel, sheet_name=0, dtype=str)
             
@@ -93,8 +98,7 @@ if file_excel:
 
             total_before = len(df)
             rows_to_keep = []
-            modified_rows_indices = [] # Lưu chỉ số index của các dòng có cảnh báo / sửa đổi
-            modified_rows_log = []
+            modified_indices = [] # Lưu vị trí danh sách các dòng bị cảnh báo/chỉnh sửa
             deleted_rows_log = []
             current_year = 2026
 
@@ -103,7 +107,7 @@ if file_excel:
             # ==========================================
             if "CT03" in option_mau:
                 for idx in df.index:
-                    changes = []
+                    is_modified = False
                     bhxh_val = df.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df.columns else ''
                     the_val = df.at[idx, 'MA_THE'] if 'MA_THE' in df.columns else ''
                     
@@ -119,32 +123,32 @@ if file_excel:
                     
                     if 'TEKT' in df.columns and df.at[idx, 'TEKT'] != '0':
                         df.at[idx, 'TEKT'] = '0'
-                        changes.append("Gán TEKT = 0")
+                        is_modified = True
 
                     cccd_raw = df.at[idx, 'SO_CCCD'] if 'SO_CCCD' in df.columns else ''
                     cccd_val = format_cccd(cccd_raw)
                     if df.at[idx, 'SO_CCCD'] != cccd_val:
                         df.at[idx, 'SO_CCCD'] = cccd_val
-                        changes.append(f"Chuẩn hóa CCCD: {cccd_val}")
+                        is_modified = True
 
                     new_lg = '1' if cccd_val else '0'
                     if 'LOAI_GIAYTO' in df.columns and df.at[idx, 'LOAI_GIAYTO'] != new_lg:
                         df.at[idx, 'LOAI_GIAYTO'] = new_lg
-                        changes.append(f"Gán LOAI_GIAYTO = {new_lg}")
+                        is_modified = True
 
                     if 'SO_SERI' in df.columns and df.at[idx, 'SO_SERI']:
                         old_seri = df.at[idx, 'SO_SERI']
                         new_seri = re.sub(r'2600', '260', old_seri)
                         if old_seri != new_seri:
                             df.at[idx, 'SO_SERI'] = new_seri
-                            changes.append(f"Sửa Seri: {old_seri} -> {new_seri}")
+                            is_modified = True
 
                     if 'NGAYCAP_CCCD' in df.columns and df.at[idx, 'NGAYCAP_CCCD']:
                         old_nc = df.at[idx, 'NGAYCAP_CCCD']
                         new_nc = format_to_yyyymmdd(old_nc)
                         if old_nc != new_nc:
                             df.at[idx, 'NGAYCAP_CCCD'] = new_nc
-                            changes.append(f"Sửa Ngày cấp: {old_nc} -> {new_nc}")
+                            is_modified = True
 
                     # Cảnh báo trẻ dưới 7 tuổi thiếu tên Bố/Mẹ
                     birth_str = df.at[idx, 'NGAY_SINH'] if 'NGAY_SINH' in df.columns else ''
@@ -155,18 +159,11 @@ if file_excel:
                             text_cha = df.at[idx, 'HO_TEN_CHA'] if 'HO_TEN_CHA' in df.columns else ''
                             text_me = df.at[idx, 'HO_TEN_ME'] if 'HO_TEN_ME' in df.columns else ''
                             if (not text_cha or text_cha.lower() == 'nan') and (not text_me or text_me.lower() == 'nan'):
-                                changes.append(f"⚠️ CẢNH BÁO: Trẻ {age}t (<7t) thiếu thông tin Bố/Mẹ")
+                                is_modified = True
 
                     rows_to_keep.append(idx)
-
-                    if changes:
-                        modified_rows_indices.append(idx)
-                        modified_rows_log.append({
-                            'STT': df.at[idx, 'STT'] if 'STT' in df.columns else str(idx + 1),
-                            'Họ và Tên': df.at[idx, 'HO_TEN'] if 'HO_TEN' in df.columns else '',
-                            'Mã BHXH': df.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df.columns else '',
-                            'Trạng thái / Nội dung': " | ".join(changes)
-                        })
+                    if is_modified:
+                        modified_indices.append(idx)
 
             # ==========================================
             # XỬ LÝ MẪU CT07 (GIẤY NGHỈ VIỆC HƯỞNG BHXH)
@@ -176,14 +173,14 @@ if file_excel:
                 df['LOAI_GIAYTO'] = '1'
 
                 for idx in df.index:
-                    changes = []
+                    is_modified = False
 
                     if 'NGAYCAP_CCCD' in df.columns and df.at[idx, 'NGAYCAP_CCCD']:
                         old_date = df.at[idx, 'NGAYCAP_CCCD']
                         new_date = format_to_yyyymmdd(old_date)
                         if old_date != new_date:
                             df.at[idx, 'NGAYCAP_CCCD'] = new_date
-                            changes.append(f"Định dạng Ngày cấp: {old_date} -> {new_date}")
+                            is_modified = True
 
                     cccd_raw = df.at[idx, 'SO_CCCD'] if 'SO_CCCD' in df.columns else ''
                     cccd_val = format_cccd(cccd_raw)
@@ -191,7 +188,7 @@ if file_excel:
                     if cccd_val:
                         if df.at[idx, 'SO_CCCD'] != cccd_val:
                             df.at[idx, 'SO_CCCD'] = cccd_val
-                            changes.append(f"Bảo toàn số 0 CCCD: {cccd_val}")
+                            is_modified = True
                         has_cccd = True
                     else:
                         has_cccd = False
@@ -206,10 +203,10 @@ if file_excel:
                         
                         if cccd_ext:
                             df.at[idx, 'SO_CCCD'] = format_cccd(cccd_ext)
-                            changes.append(f"Trích xuất CCCD từ Bố/Mẹ: {df.at[idx, 'SO_CCCD']}")
+                            is_modified = True
                             if date_ext and ('NGAYCAP_CCCD' in df.columns):
                                 df.at[idx, 'NGAYCAP_CCCD'] = date_ext
-                                changes.append(f"Trích xuất Ngày cấp từ Bố/Mẹ: {date_ext}")
+                                is_modified = True
                             has_cccd = True
 
                     curr_cccd = str(df.at[idx, 'SO_CCCD']).strip()
@@ -223,8 +220,9 @@ if file_excel:
                         })
                         continue
 
+                    # Báo cảnh báo CCCD không đủ 12 số
                     if len(curr_cccd) != 12:
-                        changes.append(f"⚠️ CẢNH BÁO: Số CCCD không đủ 12 số ({curr_cccd})")
+                        is_modified = True
 
                     elif 'NGAYCAP_CCCD' in df.columns:
                         ngaycap_val = str(df.at[idx, 'NGAYCAP_CCCD']).strip()
@@ -238,36 +236,26 @@ if file_excel:
                                     df.at[idx, 'NGAYCAP_CCCD'] = f"202202{rand_day:02d}"
                                 else:
                                     df.at[idx, 'NGAYCAP_CCCD'] = birth_formatted
-                                changes.append(f"Tự động điền Ngày cấp (Tuổi {age}): {df.at[idx, 'NGAYCAP_CCCD']}")
+                                is_modified = True
 
                     rows_to_keep.append(idx)
-
-                    if changes:
-                        modified_rows_indices.append(idx)
-                        modified_rows_log.append({
-                            'STT': df.at[idx, 'STT'] if 'STT' in df.columns else str(idx + 1),
-                            'Họ và Tên': df.at[idx, 'HO_TEN'] if 'HO_TEN' in df.columns else '',
-                            'Mã BHXH': df.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df.columns else '',
-                            'Số CCCD': df.at[idx, 'SO_CCCD'] if 'SO_CCCD' in df.columns else '',
-                            'Trạng thái / Nội dung': " | ".join(changes)
-                        })
+                    if is_modified:
+                        modified_indices.append(idx)
 
             df_clean = df.loc[rows_to_keep].copy()
             df_clean['STT'] = [str(i) for i in range(1, len(df_clean) + 1)]
 
-            # Lưu vào Session State
+            # Lưu thông tin chuẩn vào Session
             st.session_state['df_clean'] = df_clean
-            st.session_state['modified_rows_indices'] = modified_rows_indices
-            st.session_state['modified_rows_log'] = modified_rows_log
+            st.session_state['modified_indices'] = modified_indices
             st.session_state['deleted_rows_log'] = deleted_rows_log
             st.session_state['total_before'] = total_before
             st.session_state['option_mau'] = option_mau
 
-# KHU VỰC CHỈNH SỬA
+# GIỜ ĐÂY HIỂN THỊ KHU VỰC CHỈNH SỬA
 if 'df_clean' in st.session_state:
     df_clean = st.session_state['df_clean']
-    modified_rows_indices = st.session_state['modified_rows_indices']
-    modified_rows_log = st.session_state['modified_rows_log']
+    modified_indices = st.session_state['modified_indices']
     deleted_rows_log = st.session_state['deleted_rows_log']
     total_before = st.session_state['total_before']
     option_mau = st.session_state['option_mau']
@@ -282,19 +270,22 @@ if 'df_clean' in st.session_state:
     tab_edit, tab_del = st.tabs(["✏️ 1. Sửa Trực Tiếp Dòng Cảnh Báo", "🗑️ 2. Danh Sách Dòng Bị Xóa"])
 
     with tab_edit:
-        # Lọc ra CHỈ NHỮNG DÒNG CÓ CẢNH BÁO / SỬA ĐỔI để hiển thị bảng sửa
-        df_to_edit = df_clean.loc[df_clean.index.intersection(modified_rows_indices)].copy()
+        # Lọc CHÍNH XÁC chỉ các dòng có trong modified_indices
+        valid_indices = [i for i in modified_indices if i in df_clean.index]
         
-        if not df_to_edit.empty:
-            st.info("💡 **Giao diện chỉnh sửa nhanh:** Dưới đây là **chỉ riêng các dòng có cảnh báo hoặc sửa đổi**. Bạn có thể nhấp đúp trực tiếp vào ô (ví dụ: `HO_TEN_CHA`, `HO_TEN_ME`, `SO_CCCD`) để điền/sửa thông tin. Dữ liệu khi xuất ra file sẽ tự động đồng bộ đầy đủ!")
+        if valid_indices:
+            st.info(f"💡 Dưới đây là **chỉ riêng {len(valid_indices)} dòng có cảnh báo/thay đổi**. Bạn nhấp đúp vào ô bất kỳ để sửa lại trực tiếp!")
             
-            # Bảng cho phép sửa trực tiếp các dòng cảnh báo
-            edited_subset = st.data_editor(df_to_edit, use_container_width=True, key="subset_editor")
+            # Chỉ cho hiển thị đúng các dòng cảnh báo
+            df_warn = df_clean.loc[valid_indices].copy()
             
-            # Cập nhật các dòng vừa sửa trên bảng phụ vào DataFrame tổng (df_clean)
-            df_clean.update(edited_subset)
+            # Đưa bảng lên giao diện để chỉnh sửa
+            edited_warn = st.data_editor(df_warn, use_container_width=True, key="warn_editor")
+            
+            # Cập nhật giá trị vừa gõ vào df_clean chính
+            df_clean.update(edited_warn)
         else:
-            st.success("🎉 Tất cả các dòng dữ liệu đều chuẩn chỉnh, không có dòng nào bị cảnh báo!")
+            st.success("🎉 Tất cả các dòng đều chuẩn xác 100%, không có dòng nào bị cảnh báo!")
 
     with tab_del:
         if deleted_rows_log:
@@ -309,7 +300,7 @@ if 'df_clean' in st.session_state:
     else:
         output_filename = "GiayRaVien_BHXH_DaChuanHoa.xlsx" if "CT03" in option_mau else "GiayChungNhan_BHXH_DaChuanHoa.xlsx"
 
-    # Xuất file Excel đã được đồng bộ các dòng bạn vừa sửa
+    # Xuất file Excel đã được đồng bộ
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_clean.to_excel(writer, sheet_name='Dulieu_DaChuanHoa', index=False)
