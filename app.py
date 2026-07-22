@@ -8,7 +8,7 @@ import random
 st.set_page_config(page_title="Tool Chuẩn Hóa BHXH (CT07 & CT03)", page_icon="🏥", layout="wide")
 
 st.title("🏥 Tool Chuẩn Hóa Dữ Liệu BHXH (CT07 & CT03)")
-st.write("Chọn mẫu giấy tờ cần xử lý và tải file Excel lên để hệ thống tự động chuẩn hóa.")
+st.write("Chọn mẫu giấy tờ cần xử lý, tải file Excel lên và có thể **chỉnh sửa dữ liệu trực tiếp** trước khi tải về.")
 
 # Hàm làm sạch và kiểm tra CCCD đủ 12 chữ số
 def format_cccd(cccd_str):
@@ -88,14 +88,13 @@ if file_excel:
         with st.spinner("Đang đọc và xử lý dữ liệu..."):
             df = pd.read_excel(file_excel, sheet_name=0, dtype=str)
             
-            # Làm sạch khoảng trắng ban đầu
             for col in df.columns:
                 df[col] = df[col].fillna('').astype(str).str.strip()
 
             total_before = len(df)
             rows_to_keep = []
-            modified_rows_log = []  # Nhật ký các dòng có chỉnh sửa / cảnh báo
-            deleted_rows_log = []   # Nhật ký các dòng bị xóa
+            modified_rows_log = []
+            deleted_rows_log = []
             current_year = 2026
 
             # ==========================================
@@ -107,7 +106,6 @@ if file_excel:
                     bhxh_val = df.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df.columns else ''
                     the_val = df.at[idx, 'MA_THE'] if 'MA_THE' in df.columns else ''
                     
-                    # ❌ XÓA DÒNG: Nếu CẢ MA_SOBHXH VÀ MA_THE đều trống
                     if (not bhxh_val or bhxh_val.lower() == 'nan') and (not the_val or the_val.lower() == 'nan'):
                         deleted_rows_log.append({
                             'STT Gốc': df.at[idx, 'STT'] if 'STT' in df.columns else str(idx + 1),
@@ -147,17 +145,16 @@ if file_excel:
                             df.at[idx, 'NGAYCAP_CCCD'] = new_nc
                             changes.append(f"Sửa Ngày cấp: {old_nc} -> {new_nc}")
 
-                    # ⚠️ CẢNH BÁO MỚI: Bệnh nhân dưới 7 tuổi nhưng trống ô HO_TEN_CHA và HO_TEN_ME
+                    # Cảnh báo trẻ dưới 7 tuổi thiếu tên Bố/Mẹ
                     birth_str = df.at[idx, 'NGAY_SINH'] if 'NGAY_SINH' in df.columns else ''
                     birth_year, _ = parse_birth_date(birth_str)
-                    
                     if birth_year:
                         age = current_year - birth_year
                         if age < 7:
                             text_cha = df.at[idx, 'HO_TEN_CHA'] if 'HO_TEN_CHA' in df.columns else ''
                             text_me = df.at[idx, 'HO_TEN_ME'] if 'HO_TEN_ME' in df.columns else ''
                             if (not text_cha or text_cha.lower() == 'nan') and (not text_me or text_me.lower() == 'nan'):
-                                changes.append(f"⚠️ CẢNH BÁO: Bệnh nhân {age} tuổi (<7t) nhưng trống cả Họ tên Cha lẫn Mẹ")
+                                changes.append(f"⚠️ CẢNH BÁO: Bệnh nhân {age} tuổi (<7t) thiếu thông tin Bố/Mẹ")
 
                     rows_to_keep.append(idx)
 
@@ -179,7 +176,6 @@ if file_excel:
                 for idx in df.index:
                     changes = []
 
-                    # 1. Chuẩn hóa Ngày cấp nếu có sẵn
                     if 'NGAYCAP_CCCD' in df.columns and df.at[idx, 'NGAYCAP_CCCD']:
                         old_date = df.at[idx, 'NGAYCAP_CCCD']
                         new_date = format_to_yyyymmdd(old_date)
@@ -187,7 +183,6 @@ if file_excel:
                             df.at[idx, 'NGAYCAP_CCCD'] = new_date
                             changes.append(f"Định dạng Ngày cấp: {old_date} -> {new_date}")
 
-                    # 2. Xử lý CCCD
                     cccd_raw = df.at[idx, 'SO_CCCD'] if 'SO_CCCD' in df.columns else ''
                     cccd_val = format_cccd(cccd_raw)
                     
@@ -199,7 +194,6 @@ if file_excel:
                     else:
                         has_cccd = False
 
-                    # Trích xuất CCCD từ Bố/Mẹ nếu bản thân chưa có
                     if not has_cccd:
                         text_cha = df.at[idx, 'HO_TEN_CHA'] if 'HO_TEN_CHA' in df.columns else ''
                         text_me = df.at[idx, 'HO_TEN_ME'] if 'HO_TEN_ME' in df.columns else ''
@@ -218,7 +212,6 @@ if file_excel:
 
                     curr_cccd = str(df.at[idx, 'SO_CCCD']).strip()
 
-                    # ❌ XÓA DÒNG: Nếu trống SO_CCCD và không lấy được từ Bố/Mẹ
                     if not curr_cccd or curr_cccd.lower() in ['', 'nan']:
                         deleted_rows_log.append({
                             'STT Gốc': df.at[idx, 'STT'] if 'STT' in df.columns else str(idx + 1),
@@ -228,11 +221,9 @@ if file_excel:
                         })
                         continue
 
-                    # ⚠️ CẢNH BÁO: Số CCCD không đủ 12 số
                     if len(curr_cccd) != 12:
-                        changes.append(f"⚠️ CẢNH BÁO: Số CCCD không đủ 12 số (Hiện có {len(curr_cccd)} số: '{curr_cccd}') - Giữ nguyên không chỉnh sửa")
+                        changes.append(f"⚠️ CẢNH BÁO: Số CCCD không đủ 12 số ({curr_cccd})")
 
-                    # Bổ sung Ngày cấp nếu bị thiếu
                     elif 'NGAYCAP_CCCD' in df.columns:
                         ngaycap_val = str(df.at[idx, 'NGAYCAP_CCCD']).strip()
                         if not ngaycap_val or ngaycap_val.lower() in ['', 'nan']:
@@ -258,49 +249,68 @@ if file_excel:
                             'Trạng thái / Nội dung': " | ".join(changes)
                         })
 
-            # Lọc lại DataFrame và đánh lại STT liên tục
-            df = df.loc[rows_to_keep].copy()
-            df['STT'] = [str(i) for i in range(1, len(df) + 1)]
+            df_clean = df.loc[rows_to_keep].copy()
+            df_clean['STT'] = [str(i) for i in range(1, len(df_clean) + 1)]
 
-            # Lấy chuỗi ngày tháng từ cột NGAY_CT để tạo tên file
-            date_suffix = get_clean_date_str(df)
-            if date_suffix:
-                output_filename = f"GiayRaVien_BHXH_{date_suffix}.xlsx" if "CT03" in option_mau else f"GiayChungNhan_BHXH_{date_suffix}.xlsx"
-            else:
-                output_filename = "GiayRaVien_BHXH_DaChuanHoa.xlsx" if "CT03" in option_mau else "GiayChungNhan_BHXH_DaChuanHoa.xlsx"
+            # Lưu DataFrame đã chuẩn hóa vào Session State để chỉnh sửa trực tiếp
+            st.session_state['df_clean'] = df_clean
+            st.session_state['modified_rows_log'] = modified_rows_log
+            st.session_state['deleted_rows_log'] = deleted_rows_log
+            st.session_state['total_before'] = total_before
+            st.session_state['option_mau'] = option_mau
 
-            # Thông báo kết quả
-            st.success("✅ Đã xử lý chuẩn hóa dữ liệu thành công!")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("📊 Dòng ban đầu", f"{total_before} dòng")
-            c2.metric("🗑️ Dòng bị xóa", f"{len(deleted_rows_log)} dòng")
-            c3.metric("✨ Dòng hợp lệ xuất ra", f"{len(df)} dòng")
+# GIỜ ĐÂY HIỂN THỊ KHU VỰC CHỈNH SỬA VÀ TẢI FILE NẾU ĐÃ CHUẨN HÓA DỮ LIỆU
+if 'df_clean' in st.session_state:
+    df_clean = st.session_state['df_clean']
+    modified_rows_log = st.session_state['modified_rows_log']
+    deleted_rows_log = st.session_state['deleted_rows_log']
+    total_before = st.session_state['total_before']
+    option_mau = st.session_state['option_mau']
 
-            # HIỂN THỊ CÁC TAB BẢNG NHẬT KÝ
-            tab1, tab2 = st.tabs(["📝 Dòng có Chỉnh sửa / Cảnh báo", "🗑️ Danh sách Dòng bị Xóa"])
-            
-            with tab1:
-                if modified_rows_log:
-                    st.dataframe(pd.DataFrame(modified_rows_log), use_container_width=True)
-                else:
-                    st.info("Tất cả các dòng xuất ra đều hợp lệ và không có sự thay đổi dữ liệu!")
+    st.success("✅ Đã chuẩn hóa xong! Bạn có thể chỉnh sửa trực tiếp dữ liệu bên dưới trước khi xuất file.")
 
-            with tab2:
-                if deleted_rows_log:
-                    st.dataframe(pd.DataFrame(deleted_rows_log), use_container_width=True)
-                else:
-                    st.info("Không có dòng nào bị xóa!")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("📊 Dòng ban đầu", f"{total_before} dòng")
+    c2.metric("🗑️ Dòng bị xóa", f"{len(deleted_rows_log)} dòng")
+    c3.metric("✨ Dòng hợp lệ xuất ra", f"{len(df_clean)} dòng")
 
-            # Xuất file Excel
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, sheet_name='Dulieu_DaChuanHoa', index=False)
-            output.seek(0)
+    tab_edit, tab_log, tab_del = st.tabs(["✏️ 1. Sửa Dữ Liệu Trực Tiếp Bằng Bảng", "📝 2. Nhật Ký Chỉnh Sửa & Cảnh Báo", "🗑️ 3. Danh Sách Dòng Bị Xóa"])
 
-            st.download_button(
-                label=f"📥 Tải Về File Kết Quả ({output_filename})",
-                data=output,
-                file_name=output_filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary"
-            )
+    with tab_edit:
+        st.info("💡 **Mẹo:** Nhấp đúp chuột vào bất kỳ ô nào bên dưới để sửa lại thông tin (Ví dụ: điền tên Bố/Mẹ, sửa lại CCCD). Dữ liệu khi xuất ra file sẽ tự động cập nhật theo những gì bạn vừa sửa!")
+        # BẢNG CHO PHÉP SỬA TRỰC TIẾP
+        edited_df = st.data_editor(df_clean, use_container_width=True, num_rows="dynamic", key="data_editor")
+
+    with tab_log:
+        if modified_rows_log:
+            st.dataframe(pd.DataFrame(modified_rows_log), use_container_width=True)
+        else:
+            st.info("Không có dòng nào cảnh báo!")
+
+    with tab_del:
+        if deleted_rows_log:
+            st.dataframe(pd.DataFrame(deleted_rows_log), use_container_width=True)
+        else:
+            st.info("Không có dòng nào bị xóa!")
+
+    # Tạo tên file
+    date_suffix = get_clean_date_str(edited_df)
+    if date_suffix:
+        output_filename = f"GiayRaVien_BHXH_{date_suffix}.xlsx" if "CT03" in option_mau else f"GiayChungNhan_BHXH_{date_suffix}.xlsx"
+    else:
+        output_filename = "GiayRaVien_BHXH_DaChuanHoa.xlsx" if "CT03" in option_mau else "GiayChungNhan_BHXH_DaChuanHoa.xlsx"
+
+    # Xuất file từ DataFrame ĐÃ ĐƯỢC CHỈNH SỬA TRÊN BẢNG (edited_df)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        edited_df.to_excel(writer, sheet_name='Dulieu_DaChuanHoa', index=False)
+    output.seek(0)
+
+    st.markdown("---")
+    st.download_button(
+        label=f"📥 Tải Về File Kết Quả Đã Chỉnh Sửa ({output_filename})",
+        data=output,
+        file_name=output_filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary"
+    )
