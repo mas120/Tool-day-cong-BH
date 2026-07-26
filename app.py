@@ -26,15 +26,12 @@ def process_cccd(cccd_str, allow_cmnd_9_digits=False):
     if not raw_val:
         return "", False, "Trống số CCCD/CMND"
     
-    # Nếu chứa ký tự chữ cái (Ví dụ: AI2849873)
     if re.search(r'\D', raw_val):
         return raw_val, False, f"CCCD/CMND chứa ký tự chữ không hợp lệ ({raw_val})"
         
-    # Trường hợp CCCD 12 số chuẩn
     if len(raw_val) == 12:
         return raw_val, True, ""
     
-    # Trường hợp CMND 9 số cũ (Dành riêng cho CT03)
     elif len(raw_val) == 9 and allow_cmnd_9_digits:
         return raw_val, True, ""
         
@@ -77,19 +74,31 @@ def get_clean_date_str(df):
                 return clean_str[:8]
     return ""
 
-# Trích xuất năm sinh và ngày sinh dạng YYYYMMDD
-def parse_birth_date(date_str):
+# TÍNH TUỔI CHÍNH XÁC THEO NGÀY / THÁNG / NĂM
+def get_exact_age(date_str):
     if pd.isna(date_str) or not date_str:
         return None, None
     date_str = str(date_str).strip()
+    
+    day, month, year = None, None, None
     m = re.search(r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})', date_str)
     if m:
         day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        return year, f"{year}{month:02d}{day:02d}"
-    m2 = re.search(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', date_str)
-    if m2:
-        year, month, day = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
-        return year, f"{year}{month:02d}{day:02d}"
+    else:
+        m2 = re.search(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', date_str)
+        if m2:
+            year, month, day = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
+            
+    if year and month and day:
+        try:
+            birth_date = datetime(year, month, day)
+            today = datetime.now()
+            # Tính tuổi chính xác xét cả tháng và ngày sinh
+            exact_age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+            return exact_age, f"{year}{month:02d}{day:02d}"
+        except:
+            return None, None
+            
     return None, None
 
 # Trích xuất CCCD và Ngày cấp từ văn bản Bố/Mẹ
@@ -109,7 +118,6 @@ file_excel = st.file_uploader("📂 Kéo thả hoặc chọn file Excel cần x�
 
 if file_excel:
     if st.button("🚀 Tiến Hành Chuẩn Hóa Dữ Liệu", type="primary"):
-        # Reset Session State
         for key in ['df_clean', 'warn_reasons', 'deleted_rows_log', 'auto_clean_logs']:
             if key in st.session_state:
                 del st.session_state[key]
@@ -122,10 +130,9 @@ if file_excel:
 
             total_before = len(df)
             rows_to_keep = []
-            warn_reasons = {}  # Lưu trữ dạng: {index: "Lý do cảnh báo"}
+            warn_reasons = {}
             deleted_rows_log = []
             auto_clean_logs = []
-            current_year = datetime.now().year
 
             def log_auto_fix(idx_val, col_name, old_val, new_val, reason):
                 stt_str = str(df.at[idx_val, 'STT']) if 'STT' in df.columns else str(idx_val + 1)
@@ -195,15 +202,14 @@ if file_excel:
                             df.at[idx, 'NGAYCAP_CCCD'] = new_ngaycap
                             log_auto_fix(idx, 'NGAYCAP_CCCD', old_ngaycap, new_ngaycap, 'Chuyển định dạng ngày sang YYYYMMDD')
 
+                    # KIỂM TRA TUỔI CHÍNH XÁC DƯỚI 7 TUỔI
                     birth_str = str(df.at[idx, 'NGAY_SINH']) if 'NGAY_SINH' in df.columns else ''
-                    birth_year, _ = parse_birth_date(birth_str)
-                    if birth_year:
-                        age = current_year - birth_year
-                        if age < 7:
-                            text_cha = str(df.at[idx, 'HO_TEN_CHA']) if 'HO_TEN_CHA' in df.columns else ''
-                            text_me = str(df.at[idx, 'HO_TEN_ME']) if 'HO_TEN_ME' in df.columns else ''
-                            if (not text_cha or text_cha.lower() == 'nan') and (not text_me or text_me.lower() == 'nan'):
-                                reasons_list.append("Trẻ < 7 tuổi bị trống thông tin cả Họ tên Cha lẫn Mẹ")
+                    exact_age, _ = get_exact_age(birth_str)
+                    if exact_age is not None and exact_age < 7:
+                        text_cha = str(df.at[idx, 'HO_TEN_CHA']) if 'HO_TEN_CHA' in df.columns else ''
+                        text_me = str(df.at[idx, 'HO_TEN_ME']) if 'HO_TEN_ME' in df.columns else ''
+                        if (not text_cha or text_cha.lower() == 'nan') and (not text_me or text_me.lower() == 'nan'):
+                            reasons_list.append("Trẻ < 7 tuổi bị trống thông tin cả Họ tên Cha lẫn Mẹ")
 
                     rows_to_keep.append(idx)
                     if reasons_list:
@@ -275,10 +281,9 @@ if file_excel:
                         ngaycap_val = str(df.at[idx, 'NGAYCAP_CCCD']).strip()
                         if not ngaycap_val or ngaycap_val.lower() in ['', 'nan']:
                             birth_str = str(df.at[idx, 'NGAY_SINH']) if 'NGAY_SINH' in df.columns else ''
-                            birth_year, birth_formatted = parse_birth_date(birth_str)
-                            if birth_year:
-                                age = current_year - birth_year
-                                if age > 16:
+                            exact_age, birth_formatted = get_exact_age(birth_str)
+                            if exact_age is not None:
+                                if exact_age > 16:
                                     rand_day = random.randint(1, 28)
                                     auto_ngaycap = f"202202{rand_day:02d}"
                                     df.at[idx, 'NGAYCAP_CCCD'] = auto_ngaycap
@@ -312,7 +317,6 @@ if 'df_clean' in st.session_state:
 
     st.success("✅ Đã xử lý chuẩn hóa dữ liệu thành công!")
 
-    # Lọc danh sách index cảnh báo còn trong df_clean
     valid_warn_indices = [i for i in warn_reasons.keys() if i in df_clean.index]
 
     c1, c2, c3, c4 = st.columns(4)
@@ -332,7 +336,6 @@ if 'df_clean' in st.session_state:
         if valid_warn_indices:
             st.warning(f"⚠️ Phát hiện **{len(valid_warn_indices)} dòng bị cảnh báo**. Vui lòng kiểm tra cột **'LÝ_DO_CẢNH_BÁO'** trong bảng bên dưới để sửa hoặc xóa!")
             
-            # CHỨC NĂNG XÓA DÒNG CẢNH BÁO
             col_del_select, col_del_btn = st.columns([3, 1])
             
             options_dict = {}
@@ -341,7 +344,6 @@ if 'df_clean' in st.session_state:
                     row_data = df_clean.loc[w_idx]
                     stt_val = str(row_data.get('STT', w_idx + 1))
                     name_val = str(row_data.get('HO_TEN', ''))
-                    bhxh_val = str(row_data.get('MA_SOBHXH', ''))
                     reason_val = warn_reasons.get(w_idx, '')
                     label = f"STT {stt_val} - {name_val} ({reason_val})"
                     options_dict[label] = w_idx
@@ -367,7 +369,6 @@ if 'df_clean' in st.session_state:
                                 'Mã Thẻ': str(row_rem.get('MA_THE', '')),
                                 'Lý do xóa': 'Xóa thủ công từ danh sách cảnh báo'
                             })
-                            # Xóa lý do cảnh báo tương ứng
                             if idx_rem in warn_reasons:
                                 del warn_reasons[idx_rem]
                     
@@ -383,20 +384,16 @@ if 'df_clean' in st.session_state:
 
             st.markdown("---")
 
-            # HIỂN THỊ BẢNG SỬA DỮ LIỆU CÓ THÊM CỘT LÝ DO CẢNH BÁO
             df_warn = df_clean.loc[valid_warn_indices].copy()
-            
-            # Chèn cột LÝ_DO_CẢNH_BÁO vào vị trí đầu tiên
             df_warn.insert(0, 'LÝ_DO_CẢNH_BÁO', [warn_reasons.get(i, '') for i in valid_warn_indices])
             
             edited_warn = st.data_editor(
                 df_warn, 
                 use_container_width=True, 
                 key="warn_editor",
-                disabled=["LÝ_DO_CẢNH_BÁO"] # Khóa không cho sửa cột lý do
+                disabled=["LÝ_DO_CẢNH_BÁO"]
             )
             
-            # Cập nhật kết quả sửa vào df_clean (Loại bỏ cột LÝ_DO_CẢNH_BÁO trước khi gộp)
             updated_df_warn = edited_warn.drop(columns=['LÝ_DO_CẢNH_BÁO'])
             df_clean.update(updated_df_warn)
             st.session_state['df_clean'] = df_clean
@@ -418,14 +415,12 @@ if 'df_clean' in st.session_state:
         else:
             st.info("Dữ liệu đầu vào đã rất sạch, Tool không phải tự động can thiệp chỉnh sửa trường nào!")
 
-    # Tạo tên file & Tải về (Tự loại bỏ cột LÝ_DO_CẢNH_BÁO nếu có)
     date_suffix = get_clean_date_str(df_clean)
     if date_suffix:
         output_filename = f"GiayRaVien_BHXH_{date_suffix}.xlsx" if "CT03" in option_mau else f"GiayChungNhan_BHXH_{date_suffix}.xlsx"
     else:
         output_filename = "GiayRaVien_BHXH_DaChuanHoa.xlsx" if "CT03" in option_mau else "GiayChungNhan_BHXH_DaChuanHoa.xlsx"
 
-    # Đảm bảo file Excel xuất ra sạch sẽ không chứa cột cảnh báo
     df_export = df_clean.copy()
     if 'LÝ_DO_CẢNH_BÁO' in df_export.columns:
         df_export.drop(columns=['LÝ_DO_CẢNH_BÁO'], inplace=True)
