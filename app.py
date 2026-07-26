@@ -9,7 +9,7 @@ from datetime import datetime
 st.set_page_config(page_title="Tool Chuẩn Hóa BHXH (CT07 & CT03)", page_icon="🏥", layout="wide")
 
 st.title("🏥 Tool Chuẩn Hóa Dữ Liệu BHXH (CT07 & CT03)")
-st.write("Chọn mẫu giấy tờ cần xử lý, tải file Excel lên và **chỉnh sửa hoặc xóa các dòng cảnh báo** trước khi tải về.")
+st.write("Chọn mẫu giấy tờ cần xử lý, tải file Excel lên và **chỉnh sửa các cột bị cảnh báo** trước khi tải về.")
 
 # Hàm làm sạch dữ liệu CCCD ban đầu
 def clean_cccd_raw(cccd_str):
@@ -93,7 +93,6 @@ def get_exact_age(date_str):
         try:
             birth_date = datetime(year, month, day)
             today = datetime.now()
-            # Tính tuổi chính xác xét cả tháng và ngày sinh
             exact_age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
             return exact_age, f"{year}{month:02d}{day:02d}"
         except:
@@ -118,7 +117,7 @@ file_excel = st.file_uploader("📂 Kéo thả hoặc chọn file Excel cần x�
 
 if file_excel:
     if st.button("🚀 Tiến Hành Chuẩn Hóa Dữ Liệu", type="primary"):
-        for key in ['df_clean', 'warn_reasons', 'deleted_rows_log', 'auto_clean_logs']:
+        for key in ['df_clean', 'warn_reasons', 'warn_fields', 'deleted_rows_log', 'auto_clean_logs']:
             if key in st.session_state:
                 del st.session_state[key]
 
@@ -131,6 +130,7 @@ if file_excel:
             total_before = len(df)
             rows_to_keep = []
             warn_reasons = {}
+            warn_fields = {}  # Lưu trữ các cột bị lỗi dạng {index: set(["SO_CCCD", "HO_TEN_CHA", ...])}
             deleted_rows_log = []
             auto_clean_logs = []
 
@@ -154,6 +154,8 @@ if file_excel:
             if "CT03" in option_mau:
                 for idx in df.index:
                     reasons_list = []
+                    err_cols = set()
+                    
                     bhxh_val = str(df.at[idx, 'MA_SOBHXH']) if 'MA_SOBHXH' in df.columns else ''
                     the_val = str(df.at[idx, 'MA_THE']) if 'MA_THE' in df.columns else ''
                     
@@ -181,6 +183,7 @@ if file_excel:
 
                     if cccd_raw and not is_valid_cccd:
                         reasons_list.append(err_msg)
+                        err_cols.add('SO_CCCD')
 
                     new_lg = '1' if cccd_val else '0'
                     if 'LOAI_GIAYTO' in df.columns and str(df.at[idx, 'LOAI_GIAYTO']) != new_lg:
@@ -202,7 +205,7 @@ if file_excel:
                             df.at[idx, 'NGAYCAP_CCCD'] = new_ngaycap
                             log_auto_fix(idx, 'NGAYCAP_CCCD', old_ngaycap, new_ngaycap, 'Chuyển định dạng ngày sang YYYYMMDD')
 
-                    # KIỂM TRA TUỔI CHÍNH XÁC DƯỚI 7 TUỔI
+                    # KIỂM TRA TUỔI TRẺ EM DƯỚI 7 TUỔI
                     birth_str = str(df.at[idx, 'NGAY_SINH']) if 'NGAY_SINH' in df.columns else ''
                     exact_age, _ = get_exact_age(birth_str)
                     if exact_age is not None and exact_age < 7:
@@ -210,10 +213,12 @@ if file_excel:
                         text_me = str(df.at[idx, 'HO_TEN_ME']) if 'HO_TEN_ME' in df.columns else ''
                         if (not text_cha or text_cha.lower() == 'nan') and (not text_me or text_me.lower() == 'nan'):
                             reasons_list.append("Trẻ < 7 tuổi bị trống thông tin cả Họ tên Cha lẫn Mẹ")
+                            err_cols.update(['HO_TEN_CHA', 'HO_TEN_ME'])
 
                     rows_to_keep.append(idx)
                     if reasons_list:
                         warn_reasons[idx] = " | ".join(reasons_list)
+                        warn_fields[idx] = err_cols
 
             # ==========================================
             # XỬ LÝ MẪU CT07 (GIẤY NGHỈ VIỆC HƯỞNG BHXH)
@@ -224,6 +229,7 @@ if file_excel:
 
                 for idx in df.index:
                     reasons_list = []
+                    err_cols = set()
 
                     if 'NGAYCAP_CCCD' in df.columns and df.at[idx, 'NGAYCAP_CCCD']:
                         old_ngaycap = str(df.at[idx, 'NGAYCAP_CCCD'])
@@ -276,6 +282,7 @@ if file_excel:
 
                     if not is_valid_cccd or len(curr_cccd) != 12 or re.search(r'\D', curr_cccd):
                         reasons_list.append(err_msg if err_msg else "CCCD không hợp lệ")
+                        err_cols.add('SO_CCCD')
 
                     elif 'NGAYCAP_CCCD' in df.columns:
                         ngaycap_val = str(df.at[idx, 'NGAYCAP_CCCD']).strip()
@@ -295,12 +302,14 @@ if file_excel:
                     rows_to_keep.append(idx)
                     if reasons_list:
                         warn_reasons[idx] = " | ".join(reasons_list)
+                        warn_fields[idx] = err_cols
 
             df_clean = df.loc[rows_to_keep].copy()
             df_clean['STT'] = [str(i) for i in range(1, len(df_clean) + 1)]
 
             st.session_state['df_clean'] = df_clean
             st.session_state['warn_reasons'] = warn_reasons
+            st.session_state['warn_fields'] = warn_fields
             st.session_state['deleted_rows_log'] = deleted_rows_log
             st.session_state['auto_clean_logs'] = auto_clean_logs
             st.session_state['total_before'] = total_before
@@ -310,6 +319,7 @@ if file_excel:
 if 'df_clean' in st.session_state:
     df_clean = st.session_state['df_clean']
     warn_reasons = st.session_state.get('warn_reasons', {})
+    warn_fields = st.session_state.get('warn_fields', {})
     deleted_rows_log = st.session_state['deleted_rows_log']
     auto_clean_logs = st.session_state['auto_clean_logs']
     total_before = st.session_state['total_before']
@@ -334,8 +344,9 @@ if 'df_clean' in st.session_state:
     # --- TAB 1: SỬA / XÓA THỦ CÔNG ---
     with tab_edit:
         if valid_warn_indices:
-            st.warning(f"⚠️ Phát hiện **{len(valid_warn_indices)} dòng bị cảnh báo**. Vui lòng kiểm tra cột **'LÝ_DO_CẢNH_BÁO'** trong bảng bên dưới để sửa hoặc xóa!")
+            st.warning(f"⚠️ Phát hiện **{len(valid_warn_indices)} dòng bị cảnh báo**. Bảng bên dưới đã lọc gọn **chỉ hiển thị các cột dữ liệu bị lỗi** để bạn dễ sửa!")
             
+            # CHỨC NĂNG XÓA DÒNG CẢNH BÁO
             col_del_select, col_del_btn = st.columns([3, 1])
             
             options_dict = {}
@@ -371,6 +382,8 @@ if 'df_clean' in st.session_state:
                             })
                             if idx_rem in warn_reasons:
                                 del warn_reasons[idx_rem]
+                            if idx_rem in warn_fields:
+                                del warn_fields[idx_rem]
                     
                     df_clean.drop(index=indices_to_remove, inplace=True)
                     df_clean['STT'] = [str(i) for i in range(1, len(df_clean) + 1)]
@@ -378,22 +391,46 @@ if 'df_clean' in st.session_state:
                     st.session_state['df_clean'] = df_clean
                     st.session_state['deleted_rows_log'] = deleted_rows_log
                     st.session_state['warn_reasons'] = warn_reasons
+                    st.session_state['warn_fields'] = warn_fields
                     
                     st.toast(f"Đã xóa thành công {len(indices_to_remove)} dòng!", icon="✅")
                     st.rerun()
 
             st.markdown("---")
 
-            df_warn = df_clean.loc[valid_warn_indices].copy()
+            # --- BẢNG HIỂN THỊ RÚT GỌN CHỈ HIỂN THỊ CÁC CỘT CẦN SỬA ---
+            # 1. Các cột định danh cố định
+            base_cols = ['STT', 'HO_TEN', 'MA_SOBHXH']
+            
+            # 2. Thu thập tất cả các cột bị lỗi ở các dòng cảnh báo hiện tại
+            active_err_cols = set()
+            for w_idx in valid_warn_indices:
+                if w_idx in warn_fields:
+                    active_err_cols.update(warn_fields[w_idx])
+
+            # 3. Tổng hợp danh sách cột hiển thị (Cố định + Cột lỗi)
+            display_cols = [c for c in base_cols if c in df_clean.columns]
+            for err_c in active_err_cols:
+                if err_c in df_clean.columns and err_c not in display_cols:
+                    display_cols.append(err_c)
+
+            # Lấy dữ liệu rút gọn
+            df_warn = df_clean.loc[valid_warn_indices, display_cols].copy()
+            
+            # Chèn cột LÝ_DO_CẢNH_BÁO lên đầu
             df_warn.insert(0, 'LÝ_DO_CẢNH_BÁO', [warn_reasons.get(i, '') for i in valid_warn_indices])
             
+            # Khóa không cho chỉnh sửa các cột định danh + cột Lý do cảnh báo
+            disabled_cols = ['LÝ_DO_CẢNH_BÁO'] + [c for c in base_cols if c in display_cols]
+
             edited_warn = st.data_editor(
                 df_warn, 
                 use_container_width=True, 
                 key="warn_editor",
-                disabled=["LÝ_DO_CẢNH_BÁO"]
+                disabled=disabled_cols
             )
             
+            # Cập nhật kết quả sửa vào df_clean chính
             updated_df_warn = edited_warn.drop(columns=['LÝ_DO_CẢNH_BÁO'])
             df_clean.update(updated_df_warn)
             st.session_state['df_clean'] = df_clean
