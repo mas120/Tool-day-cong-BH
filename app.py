@@ -279,12 +279,11 @@ if 'df_clean' in st.session_state:
             # --- CHỨC NĂNG XÓA DÒNG CẢNH BÁO ---
             col_del_select, col_del_btn = st.columns([3, 1])
             
-            # Tạo danh sách lựa chọn dạng: STT - HO_TEN - MA_SOBHXH
             options_dict = {}
             for idx in valid_warn_indices:
                 stt_val = df_clean.at[idx, 'STT'] if 'STT' in df_clean.columns else str(idx + 1)
                 name_val = df_clean.at[idx, 'HO_TEN'] if 'HO_TEN' in df_clean.columns else ''
-                bhxh_val = df_clean.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df_clean.columns else ''
+                bhxh_val = df_clean.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df.columns else ''
                 label = f"STT {stt_val} - {name_val} (BHXH: {bhxh_val})"
                 options_dict[label] = idx
 
@@ -298,22 +297,18 @@ if 'df_clean' in st.session_state:
                 if selected_labels:
                     indices_to_remove = [options_dict[lbl] for lbl in selected_labels]
                     
-                    # Ghi nhật ký vào danh sách dòng bị xóa
                     for idx_rem in indices_to_remove:
                         deleted_rows_log.append({
                             'STT Gốc': df_clean.at[idx_rem, 'STT'] if 'STT' in df_clean.columns else str(idx_rem + 1),
                             'Họ và Tên': df_clean.at[idx_rem, 'HO_TEN'] if 'HO_TEN' in df_clean.columns else '',
-                            'Mã BHXH': df_clean.at[idx_rem, 'MA_SOBHXH'] if 'MA_SOBHXH' in df_clean.columns else '',
-                            'Mã Thẻ': df_clean.at[idx_rem, 'MA_THE'] if 'MA_THE' in df_clean.columns else '',
+                            'Mã BHXH': df_clean.at[idx_rem, 'MA_SOBHXH'] if 'MA_SOBHXH' in df.columns else '',
+                            'Mã Thẻ': df_clean.at[idx_rem, 'MA_THE'] if 'MA_THE' in df.columns else '',
                             'Lý do xóa': 'Xóa thủ công từ danh sách cảnh báo'
                         })
                     
-                    # Cập nhật lại DataFrame & Index Cảnh Báo
                     df_clean.drop(index=indices_to_remove, inplace=True)
-                    # Đánh lại STT
                     df_clean['STT'] = [str(i) for i in range(1, len(df_clean) + 1)]
                     
-                    # Cập nhật Session State
                     st.session_state['df_clean'] = df_clean
                     st.session_state['deleted_rows_log'] = deleted_rows_log
                     st.session_state['warn_indices'] = [i for i in warn_indices if i not in indices_to_remove]
@@ -339,35 +334,38 @@ if 'df_clean' in st.session_state:
         else:
             st.info("Không có dòng nào bị xóa!")
 
+    # ==========================================
+    # TAB 3: NHẬT KÝ CHI TIẾT CÁC Ô ĐÃ SỬA
+    # ==========================================
     with tab_history:
         edit_logs = []
         if not df_original_warn.empty:
             for idx in df_original_warn.index:
-                # Kiểm tra nếu dòng chưa bị xóa thì mới so sánh
+                # Chỉ kiểm tra nếu dòng này chưa bị xóa
                 if idx in df_clean.index:
                     row_orig = df_original_warn.loc[idx]
                     row_curr = df_clean.loc[idx]
                     
-                    changes = []
                     for col in df_clean.columns:
                         val_orig = str(row_orig[col])
                         val_curr = str(row_curr[col])
+                        
+                        # Nếu giá trị bị thay đổi, tạo 1 dòng nhật ký riêng
                         if val_orig != val_curr:
-                            changes.append(f"Cột **{col}**: '{val_orig}' ➔ '{val_curr}'")
-                    
-                    if changes:
-                        edit_logs.append({
-                            'STT': row_curr.get('STT', str(idx + 1)),
-                            'Họ và Tên': row_curr.get('HO_TEN', ''),
-                            'Mã BHXH': row_curr.get('MA_SOBHXH', ''),
-                            'Nội dung chỉnh sửa': "; ".join(changes)
-                        })
+                            edit_logs.append({
+                                'STT': row_curr.get('STT', str(idx + 1)),
+                                'Họ và Tên': row_curr.get('HO_TEN', ''),
+                                'Mã BHXH': row_curr.get('MA_SOBHXH', ''),
+                                'Cột Cập Nhật': col,
+                                'Giá Trị Cũ (Trước khi sửa)': val_orig if val_orig else '(Trống)',
+                                'Giá Trị Mới (Sau khi sửa)': val_curr if val_curr else '(Trống)'
+                            })
 
         if edit_logs:
-            st.subheader("📋 Chi tiết các ô vừa được chỉnh sửa:")
+            st.subheader(f"📋 Bảng Lịch Sử Chi Tiết ({len(edit_logs)} thao tác chỉnh sửa):")
             st.dataframe(pd.DataFrame(edit_logs), use_container_width=True)
         else:
-            st.info("Chưa có thao tác chỉnh sửa nào trên bảng dòng cảnh báo.")
+            st.info("Chưa có thao tác chỉnh sửa nào. Nhấp đúp vào các ô ở Tab 1 để sửa dữ liệu!")
 
     # Tạo tên file & Tải về
     date_suffix = get_clean_date_str(df_clean)
