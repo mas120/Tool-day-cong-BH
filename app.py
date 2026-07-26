@@ -9,7 +9,7 @@ from datetime import datetime
 st.set_page_config(page_title="Tool Chuẩn Hóa BHXH (CT07 & CT03)", page_icon="🏥", layout="wide")
 
 st.title("🏥 Tool Chuẩn Hóa Dữ Liệu BHXH (CT07 & CT03)")
-st.write("Tải file Excel chứng từ lên, **tool sẽ tự động nhận diện mẫu giấy tờ** và đưa ra danh sách chỉnh sửa tối ưu.")
+st.write("Tải file Excel chứng từ lên, **tool sẽ tự động nhận diện mẫu giấy tờ và tiến hành chuẩn hóa ngay lập tức**.")
 
 # Hàm làm sạch dữ liệu CCCD ban đầu
 def clean_cccd_raw(cccd_str):
@@ -124,15 +124,18 @@ if file_excel:
         detected_mau = "CT07"
         st.info("📋 Hệ thống tự động nhận diện mẫu: **CT07 (Giấy nghỉ việc hưởng BHXH)**")
     else:
-        # Trường hợp tên file lạ, cho chọn fallback
         detected_mau = st.radio("⚠️ Không thể tự nhận diện qua tên file, vui lòng chọn mẫu:", ["CT07", "CT03"], horizontal=True)
 
-    if st.button("🚀 Tiến Hành Chuẩn Hóa Dữ Liệu", type="primary"):
+    # TỰ ĐỘNG XỬ LÝ NGAY KHI CÓ FILE TẢI LÊN HOẶC ĐỔI FILE MỚI
+    if ('current_file' not in st.session_state) or (st.session_state['current_file'] != file_excel.name):
+        st.session_state['current_file'] = file_excel.name
+        
+        # Reset lại Session State khi đọc file mới
         for key in ['df_clean', 'warn_reasons', 'warn_fields', 'deleted_rows_log', 'auto_clean_logs']:
             if key in st.session_state:
                 del st.session_state[key]
 
-        with st.spinner("Đang đọc và xử lý dữ liệu..."):
+        with st.spinner("Đang đọc và tự động xử lý dữ liệu..."):
             df = pd.read_excel(file_excel, sheet_name=0, dtype=str)
             
             for col in df.columns:
