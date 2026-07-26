@@ -8,7 +8,7 @@ from datetime import datetime
 st.set_page_config(page_title="Tool Chuẩn Hóa BHXH (CT07 & CT03)", page_icon="🏥", layout="wide")
 
 st.title("🏥 Tool Chuẩn Hóa Dữ Liệu BHXH (CT07 & CT03)")
-st.write("Chọn mẫu giấy tờ cần xử lý, tải file Excel lên và **chỉnh sửa trực tiếp các dòng cảnh báo** trước khi tải về.")
+st.write("Chọn mẫu giấy tờ cần xử lý, tải file Excel lên và **chỉnh sửa hoặc xóa các dòng cảnh báo** trước khi tải về.")
 
 # Hàm làm sạch CCCD (Giữ nguyên gốc để kiểm tra tính hợp lệ)
 def clean_cccd_raw(cccd_str):
@@ -23,7 +23,7 @@ def clean_cccd_raw(cccd_str):
 def process_cccd(cccd_str):
     raw_val = clean_cccd_raw(cccd_str)
     if not raw_val:
-        return "", False  # Rống, Không hợp lệ
+        return "", False  # Trống, Không hợp lệ
     
     # Nếu chứa chữ cái (như AI2849873) -> Không hợp lệ
     if re.search(r'\D', raw_val):
@@ -33,7 +33,7 @@ def process_cccd(cccd_str):
     if len(raw_val) == 12:
         return raw_val, True
     elif 0 < len(raw_val) < 12:
-        # Pad số 0 nhưng vẫn đánh dấu là cần kiểm tra nếu bản gốc quá ngắn/bị sai
+        # Pad số 0 nhưng vẫn đánh dấu là cần kiểm tra
         return raw_val.zfill(12), False
     else:
         return raw_val, False
@@ -96,7 +96,7 @@ file_excel = st.file_uploader("📂 Kéo thả hoặc chọn file Excel cần x�
 
 if file_excel:
     if st.button("🚀 Tiến Hành Chuẩn Hóa Dữ Liệu", type="primary"):
-        for key in ['df_clean', 'df_original_warn', 'warn_indices', 'deleted_rows_log', 'edit_history']:
+        for key in ['df_clean', 'df_original_warn', 'warn_indices', 'deleted_rows_log']:
             if key in st.session_state:
                 del st.session_state[key]
 
@@ -213,7 +213,7 @@ if file_excel:
                         })
                         continue
 
-                    # Báo cảnh báo nếu chứa chữ cái hoặc không đúng chuẩn 12 số
+                    # Cảnh báo nếu chứa chữ cái hoặc không đủ 12 số
                     if not is_valid_cccd or len(curr_cccd) != 12 or re.search(r'\D', curr_cccd):
                         is_warning = True
 
@@ -237,7 +237,7 @@ if file_excel:
             df_clean = df.loc[rows_to_keep].copy()
             df_clean['STT'] = [str(i) for i in range(1, len(df_clean) + 1)]
 
-            # Lưu lại trạng thái ban đầu của các dòng cảnh báo để so sánh chỉnh sửa
+            # Lưu lại trạng thái ban đầu của các dòng cảnh báo để so sánh
             df_original_warn = df_clean.loc[warn_indices].copy() if warn_indices else pd.DataFrame()
 
             st.session_state['df_clean'] = df_clean
@@ -258,24 +258,72 @@ if 'df_clean' in st.session_state:
 
     st.success("✅ Đã xử lý chuẩn hóa dữ liệu thành công!")
 
+    # Lọc lại các index cảnh báo còn tồn tại trong df_clean
+    valid_warn_indices = [i for i in warn_indices if i in df_clean.index]
+
     c1, c2, c3 = st.columns(3)
     c1.metric("📊 Dòng ban đầu", f"{total_before} dòng")
     c2.metric("🗑️ Dòng bị xóa", f"{len(deleted_rows_log)} dòng")
-    c3.metric("⚠️ Dòng bị cảnh báo cần sửa", f"{len(warn_indices)} dòng")
+    c3.metric("⚠️ Dòng bị cảnh báo cần sửa", f"{len(valid_warn_indices)} dòng")
 
-    # Tạo 3 Tabs giao diện
     tab_edit, tab_del, tab_history = st.tabs([
-        "✏️ 1. Sửa Trực Tiếp Dòng Cảnh Báo", 
+        "✏️ 1. Sửa / Xóa Dòng Cảnh Báo", 
         "🗑️ 2. Danh Sách Dòng Bị Xóa", 
-        "📝 3. Nhật Ký Các Dòng Đã Chỉnh Sửa"
+        "📝 3. Nhật Ký Chỉnh Sửa"
     ])
 
     with tab_edit:
-        valid_warn_indices = [i for i in warn_indices if i in df_clean.index]
-        
         if valid_warn_indices:
-            st.warning(f"⚠️ Phát hiện **{len(valid_warn_indices)} dòng bị cảnh báo** (CCCD chứa ký tự/không đủ 12 số, hoặc trẻ <7t thiếu Bố/Mẹ). Nhấp đúp vào ô để sửa trực tiếp!")
+            st.warning(f"⚠️ Phát hiện **{len(valid_warn_indices)} dòng bị cảnh báo**. Nhấp đúp vào ô để sửa trực tiếp, hoặc chọn các dòng cần loại bỏ bên dưới.")
             
+            # --- CHỨC NĂNG XÓA DÒNG CẢNH BÁO ---
+            col_del_select, col_del_btn = st.columns([3, 1])
+            
+            # Tạo danh sách lựa chọn dạng: STT - HO_TEN - MA_SOBHXH
+            options_dict = {}
+            for idx in valid_warn_indices:
+                stt_val = df_clean.at[idx, 'STT'] if 'STT' in df_clean.columns else str(idx + 1)
+                name_val = df_clean.at[idx, 'HO_TEN'] if 'HO_TEN' in df_clean.columns else ''
+                bhxh_val = df_clean.at[idx, 'MA_SOBHXH'] if 'MA_SOBHXH' in df_clean.columns else ''
+                label = f"STT {stt_val} - {name_val} (BHXH: {bhxh_val})"
+                options_dict[label] = idx
+
+            selected_labels = col_del_select.multiselect(
+                "🗑️ Chọn các dòng cảnh báo muốn XÓA:",
+                options=list(options_dict.keys()),
+                placeholder="Chọn một hoặc nhiều dòng để xóa..."
+            )
+
+            if col_del_btn.button("🔥 Xóa Dòng Đã Chọn", type="secondary"):
+                if selected_labels:
+                    indices_to_remove = [options_dict[lbl] for lbl in selected_labels]
+                    
+                    # Ghi nhật ký vào danh sách dòng bị xóa
+                    for idx_rem in indices_to_remove:
+                        deleted_rows_log.append({
+                            'STT Gốc': df_clean.at[idx_rem, 'STT'] if 'STT' in df_clean.columns else str(idx_rem + 1),
+                            'Họ và Tên': df_clean.at[idx_rem, 'HO_TEN'] if 'HO_TEN' in df_clean.columns else '',
+                            'Mã BHXH': df_clean.at[idx_rem, 'MA_SOBHXH'] if 'MA_SOBHXH' in df_clean.columns else '',
+                            'Mã Thẻ': df_clean.at[idx_rem, 'MA_THE'] if 'MA_THE' in df_clean.columns else '',
+                            'Lý do xóa': 'Xóa thủ công từ danh sách cảnh báo'
+                        })
+                    
+                    # Cập nhật lại DataFrame & Index Cảnh Báo
+                    df_clean.drop(index=indices_to_remove, inplace=True)
+                    # Đánh lại STT
+                    df_clean['STT'] = [str(i) for i in range(1, len(df_clean) + 1)]
+                    
+                    # Cập nhật Session State
+                    st.session_state['df_clean'] = df_clean
+                    st.session_state['deleted_rows_log'] = deleted_rows_log
+                    st.session_state['warn_indices'] = [i for i in warn_indices if i not in indices_to_remove]
+                    
+                    st.toast(f"Đã xóa thành công {len(indices_to_remove)} dòng!", icon="✅")
+                    st.rerun()
+
+            st.markdown("---")
+
+            # --- BẢNG SỬA TRỰC TIẾP ---
             df_warn = df_clean.loc[valid_warn_indices].copy()
             edited_warn = st.data_editor(df_warn, use_container_width=True, key="warn_editor")
             
@@ -292,30 +340,31 @@ if 'df_clean' in st.session_state:
             st.info("Không có dòng nào bị xóa!")
 
     with tab_history:
-        # Tự động ghi nhận và so sánh sự thay đổi giữa dữ liệu gốc & dữ liệu đã sửa
         edit_logs = []
         if not df_original_warn.empty:
             for idx in df_original_warn.index:
-                row_orig = df_original_warn.loc[idx]
-                row_curr = df_clean.loc[idx]
-                
-                changes = []
-                for col in df_clean.columns:
-                    val_orig = str(row_orig[col])
-                    val_curr = str(row_curr[col])
-                    if val_orig != val_curr:
-                        changes.append(f"Cột **{col}**: '{val_orig}' ➔ '{val_curr}'")
-                
-                if changes:
-                    edit_logs.append({
-                        'STT': row_curr.get('STT', str(idx + 1)),
-                        'Họ và Tên': row_curr.get('HO_TEN', ''),
-                        'Mã BHXH': row_curr.get('MA_SOBHXH', ''),
-                        'Nội dung chỉnh sửa': "; ".join(changes)
-                    })
+                # Kiểm tra nếu dòng chưa bị xóa thì mới so sánh
+                if idx in df_clean.index:
+                    row_orig = df_original_warn.loc[idx]
+                    row_curr = df_clean.loc[idx]
+                    
+                    changes = []
+                    for col in df_clean.columns:
+                        val_orig = str(row_orig[col])
+                        val_curr = str(row_curr[col])
+                        if val_orig != val_curr:
+                            changes.append(f"Cột **{col}**: '{val_orig}' ➔ '{val_curr}'")
+                    
+                    if changes:
+                        edit_logs.append({
+                            'STT': row_curr.get('STT', str(idx + 1)),
+                            'Họ và Tên': row_curr.get('HO_TEN', ''),
+                            'Mã BHXH': row_curr.get('MA_SOBHXH', ''),
+                            'Nội dung chỉnh sửa': "; ".join(changes)
+                        })
 
         if edit_logs:
-            st.subheader("📋 Chi tiết các ô vừa được thao tác chỉnh sửa:")
+            st.subheader("📋 Chi tiết các ô vừa được chỉnh sửa:")
             st.dataframe(pd.DataFrame(edit_logs), use_container_width=True)
         else:
             st.info("Chưa có thao tác chỉnh sửa nào trên bảng dòng cảnh báo.")
