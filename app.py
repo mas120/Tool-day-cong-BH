@@ -9,7 +9,7 @@ from datetime import datetime
 st.set_page_config(page_title="Tool Chuẩn Hóa BHXH (CT07 & CT03)", page_icon="🏥", layout="wide")
 
 st.title("🏥 Tool Chuẩn Hóa Dữ Liệu BHXH (CT07 & CT03)")
-st.write("Chọn mẫu giấy tờ cần xử lý, tải file Excel lên và **chỉnh sửa các cột bị cảnh báo** trước khi tải về.")
+st.write("Tải file Excel chứng từ lên, **tool sẽ tự động nhận diện mẫu giấy tờ** và đưa ra danh sách chỉnh sửa tối ưu.")
 
 # Hàm làm sạch dữ liệu CCCD ban đầu
 def clean_cccd_raw(cccd_str):
@@ -110,12 +110,23 @@ def extract_cccd_and_date(text):
     date_val = format_to_yyyymmdd(date_match.group(0)) if date_match else None
     return cccd, date_val
 
-# Lựa chọn loại mẫu chứng từ
-option_mau = st.radio("📌 Chọn loại mẫu chứng từ cần xử lý:", ["Mẫu CT07 (Giấy nghỉ việc hưởng BHXH)", "Mẫu CT03 (Giấy ra viện)"], horizontal=True)
-
+# TẢI FILE EXCEL
 file_excel = st.file_uploader("📂 Kéo thả hoặc chọn file Excel cần xử lý", type=["xlsx"])
 
 if file_excel:
+    file_name = file_excel.name.lower()
+    
+    # TỰ ĐỘNG NHẬN DIỆN MẪU CHỨNG TỪ TỪ TÊN FILE
+    if "ravien" in file_name or "ct03" in file_name:
+        detected_mau = "CT03"
+        st.info("📋 Hệ thống tự động nhận diện mẫu: **CT03 (Giấy ra viện)**")
+    elif "nghiviec" in file_name or "chungnhan" in file_name or "ct07" in file_name:
+        detected_mau = "CT07"
+        st.info("📋 Hệ thống tự động nhận diện mẫu: **CT07 (Giấy nghỉ việc hưởng BHXH)**")
+    else:
+        # Trường hợp tên file lạ, cho chọn fallback
+        detected_mau = st.radio("⚠️ Không thể tự nhận diện qua tên file, vui lòng chọn mẫu:", ["CT07", "CT03"], horizontal=True)
+
     if st.button("🚀 Tiến Hành Chuẩn Hóa Dữ Liệu", type="primary"):
         for key in ['df_clean', 'warn_reasons', 'warn_fields', 'deleted_rows_log', 'auto_clean_logs']:
             if key in st.session_state:
@@ -130,7 +141,7 @@ if file_excel:
             total_before = len(df)
             rows_to_keep = []
             warn_reasons = {}
-            warn_fields = {}  # Lưu trữ các cột bị lỗi dạng {index: set(["SO_CCCD", "HO_TEN_CHA", ...])}
+            warn_fields = {}
             deleted_rows_log = []
             auto_clean_logs = []
 
@@ -151,7 +162,7 @@ if file_excel:
             # ==========================================
             # XỬ LÝ MẪU CT03 (GIẤY RA VIỆN)
             # ==========================================
-            if "CT03" in option_mau:
+            if detected_mau == "CT03":
                 for idx in df.index:
                     reasons_list = []
                     err_cols = set()
@@ -163,6 +174,7 @@ if file_excel:
                         deleted_rows_log.append({
                             'STT Gốc': str(df.at[idx, 'STT']) if 'STT' in df.columns else str(idx + 1),
                             'Họ và Tên': str(df.at[idx, 'HO_TEN']) if 'HO_TEN' in df.columns else '',
+                            'Mã CT': str(df.at[idx, 'MA_CT']) if 'MA_CT' in df.columns else '',
                             'Mã BHXH': bhxh_val,
                             'Mã Thẻ': the_val,
                             'Lý do xóa': 'Trống cả Mã số BHXH lẫn Mã thẻ BHYT'
@@ -275,6 +287,7 @@ if file_excel:
                         deleted_rows_log.append({
                             'STT Gốc': str(df.at[idx, 'STT']) if 'STT' in df.columns else str(idx + 1),
                             'Họ và Tên': str(df.at[idx, 'HO_TEN']) if 'HO_TEN' in df.columns else '',
+                            'Mã CT': str(df.at[idx, 'MA_CT']) if 'MA_CT' in df.columns else '',
                             'Mã BHXH': str(df.at[idx, 'MA_SOBHXH']) if 'MA_SOBHXH' in df.columns else '',
                             'Lý do xóa': 'Trống số CCCD (và không trích xuất được từ Bố/Mẹ)'
                         })
@@ -313,7 +326,7 @@ if file_excel:
             st.session_state['deleted_rows_log'] = deleted_rows_log
             st.session_state['auto_clean_logs'] = auto_clean_logs
             st.session_state['total_before'] = total_before
-            st.session_state['option_mau'] = option_mau
+            st.session_state['detected_mau'] = detected_mau
 
 # KHU VỰC CHỈNH SỬA VÀ HIỂN THỊ KẾT QUẢ
 if 'df_clean' in st.session_state:
@@ -323,7 +336,7 @@ if 'df_clean' in st.session_state:
     deleted_rows_log = st.session_state['deleted_rows_log']
     auto_clean_logs = st.session_state['auto_clean_logs']
     total_before = st.session_state['total_before']
-    option_mau = st.session_state['option_mau']
+    detected_mau = st.session_state['detected_mau']
 
     st.success("✅ Đã xử lý chuẩn hóa dữ liệu thành công!")
 
@@ -355,8 +368,9 @@ if 'df_clean' in st.session_state:
                     row_data = df_clean.loc[w_idx]
                     stt_val = str(row_data.get('STT', w_idx + 1))
                     name_val = str(row_data.get('HO_TEN', ''))
+                    mact_val = str(row_data.get('MA_CT', ''))
                     reason_val = warn_reasons.get(w_idx, '')
-                    label = f"STT {stt_val} - {name_val} ({reason_val})"
+                    label = f"STT {stt_val} - Mã CT: {mact_val} - {name_val} ({reason_val})"
                     options_dict[label] = w_idx
 
             selected_labels = col_del_select.multiselect(
@@ -376,8 +390,8 @@ if 'df_clean' in st.session_state:
                             deleted_rows_log.append({
                                 'STT Gốc': str(row_rem.get('STT', idx_rem + 1)),
                                 'Họ và Tên': str(row_rem.get('HO_TEN', '')),
+                                'Mã CT': str(row_rem.get('MA_CT', '')),
                                 'Mã BHXH': str(row_rem.get('MA_SOBHXH', '')),
-                                'Mã Thẻ': str(row_rem.get('MA_THE', '')),
                                 'Lý do xóa': 'Xóa thủ công từ danh sách cảnh báo'
                             })
                             if idx_rem in warn_reasons:
@@ -398,29 +412,22 @@ if 'df_clean' in st.session_state:
 
             st.markdown("---")
 
-            # --- BẢNG HIỂN THỊ RÚT GỌN CHỈ HIỂN THỊ CÁC CỘT CẦN SỬA ---
-            # 1. Các cột định danh cố định
-            base_cols = ['STT', 'HO_TEN', 'MA_SOBHXH']
+            # --- BẢNG HIỂN THỊ RÚT GỌN ---
+            base_cols = ['STT', 'HO_TEN', 'MA_CT']
             
-            # 2. Thu thập tất cả các cột bị lỗi ở các dòng cảnh báo hiện tại
             active_err_cols = set()
             for w_idx in valid_warn_indices:
                 if w_idx in warn_fields:
                     active_err_cols.update(warn_fields[w_idx])
 
-            # 3. Tổng hợp danh sách cột hiển thị (Cố định + Cột lỗi)
             display_cols = [c for c in base_cols if c in df_clean.columns]
             for err_c in active_err_cols:
                 if err_c in df_clean.columns and err_c not in display_cols:
                     display_cols.append(err_c)
 
-            # Lấy dữ liệu rút gọn
             df_warn = df_clean.loc[valid_warn_indices, display_cols].copy()
-            
-            # Chèn cột LÝ_DO_CẢNH_BÁO lên đầu
             df_warn.insert(0, 'LÝ_DO_CẢNH_BÁO', [warn_reasons.get(i, '') for i in valid_warn_indices])
             
-            # Khóa không cho chỉnh sửa các cột định danh + cột Lý do cảnh báo
             disabled_cols = ['LÝ_DO_CẢNH_BÁO'] + [c for c in base_cols if c in display_cols]
 
             edited_warn = st.data_editor(
@@ -430,7 +437,6 @@ if 'df_clean' in st.session_state:
                 disabled=disabled_cols
             )
             
-            # Cập nhật kết quả sửa vào df_clean chính
             updated_df_warn = edited_warn.drop(columns=['LÝ_DO_CẢNH_BÁO'])
             df_clean.update(updated_df_warn)
             st.session_state['df_clean'] = df_clean
@@ -454,9 +460,9 @@ if 'df_clean' in st.session_state:
 
     date_suffix = get_clean_date_str(df_clean)
     if date_suffix:
-        output_filename = f"GiayRaVien_BHXH_{date_suffix}.xlsx" if "CT03" in option_mau else f"GiayChungNhan_BHXH_{date_suffix}.xlsx"
+        output_filename = f"GiayRaVien_BHXH_{date_suffix}.xlsx" if detected_mau == "CT03" else f"GiayChungNhan_BHXH_{date_suffix}.xlsx"
     else:
-        output_filename = "GiayRaVien_BHXH_DaChuanHoa.xlsx" if "CT03" in option_mau else "GiayChungNhan_BHXH_DaChuanHoa.xlsx"
+        output_filename = "GiayRaVien_BHXH_DaChuanHoa.xlsx" if detected_mau == "CT03" else "GiayChungNhan_BHXH_DaChuanHoa.xlsx"
 
     df_export = df_clean.copy()
     if 'LÝ_DO_CẢNH_BÁO' in df_export.columns:
