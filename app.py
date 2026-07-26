@@ -3,26 +3,41 @@ import pandas as pd
 import io
 import re
 import random
+from datetime import datetime
 
-# Cấu hình giao diện
 st.set_page_config(page_title="Tool Chuẩn Hóa BHXH (CT07 & CT03)", page_icon="🏥", layout="wide")
 
 st.title("🏥 Tool Chuẩn Hóa Dữ Liệu BHXH (CT07 & CT03)")
 st.write("Chọn mẫu giấy tờ cần xử lý, tải file Excel lên và **chỉnh sửa trực tiếp các dòng cảnh báo** trước khi tải về.")
 
-# Hàm làm sạch và kiểm tra CCCD đủ 12 chữ số
-def format_cccd(cccd_str):
+# Hàm làm sạch CCCD (Giữ nguyên gốc để kiểm tra tính hợp lệ)
+def clean_cccd_raw(cccd_str):
     if pd.isna(cccd_str) or not cccd_str:
         return ""
     val = str(cccd_str).strip()
     if val.endswith('.0'):
         val = val[:-2]
-    val = re.sub(r'\D', '', val)
-    if 0 < len(val) <= 12:
-        return val.zfill(12)
     return val
 
-# Hàm chuyển đổi định dạng ngày sang YYYYMMDD
+# Hàm kiểm tra và format CCCD
+def process_cccd(cccd_str):
+    raw_val = clean_cccd_raw(cccd_str)
+    if not raw_val:
+        return "", False  # Rống, Không hợp lệ
+    
+    # Nếu chứa chữ cái (như AI2849873) -> Không hợp lệ
+    if re.search(r'\D', raw_val):
+        return raw_val, False
+        
+    # Nếu chỉ toàn số
+    if len(raw_val) == 12:
+        return raw_val, True
+    elif 0 < len(raw_val) < 12:
+        # Pad số 0 nhưng vẫn đánh dấu là cần kiểm tra nếu bản gốc quá ngắn/bị sai
+        return raw_val.zfill(12), False
+    else:
+        return raw_val, False
+
 def format_to_yyyymmdd(date_str):
     if pd.isna(date_str) or not date_str:
         return ""
@@ -41,7 +56,6 @@ def format_to_yyyymmdd(date_str):
         return f"{year}{int(month):02d}{int(day):02d}"
     return date_str
 
-# Hàm lấy chuỗi Ngày/Tháng/Năm từ cột NGAY_CT để tạo tên file
 def get_clean_date_str(df):
     if 'NGAY_CT' in df.columns:
         first_valid_date = df['NGAY_CT'].dropna().astype(str).str.strip()
@@ -53,7 +67,6 @@ def get_clean_date_str(df):
                 return clean_str[:8]
     return ""
 
-# Hàm trích xuất Năm sinh và chuỗi YYYYMMDD
 def parse_birth_date(date_str):
     if pd.isna(date_str) or not date_str:
         return None, None
@@ -68,7 +81,6 @@ def parse_birth_date(date_str):
         return year, f"{year}{month:02d}{day:02d}"
     return None, None
 
-# Hàm trích xuất CCCD và Ngày cấp từ chuỗi Bố/Mẹ
 def extract_cccd_and_date(text):
     if pd.isna(text) or not isinstance(text, str):
         return None, None
@@ -78,15 +90,13 @@ def extract_cccd_and_date(text):
     date_val = format_to_yyyymmdd(date_match.group(0)) if date_match else None
     return cccd, date_val
 
-# Lựa chọn loại mẫu giấy tờ
 option_mau = st.radio("📌 Chọn loại mẫu chứng từ cần xử lý:", ["Mẫu CT07 (Giấy nghỉ việc hưởng BHXH)", "Mẫu CT03 (Giấy ra viện)"], horizontal=True)
 
 file_excel = st.file_uploader("📂 Kéo thả hoặc chọn file Excel cần xử lý", type=["xlsx"])
 
 if file_excel:
     if st.button("🚀 Tiến Hành Chuẩn Hóa Dữ Liệu", type="primary"):
-        # Reset lại session state khi bấm nút chạy file mới
-        for key in ['df_clean', 'warn_indices', 'deleted_rows_log']:
+        for key in ['df_clean', 'df_original_warn', 'warn_indices', 'deleted_rows_log', 'edit_history']:
             if key in st.session_state:
                 del st.session_state[key]
 
@@ -98,12 +108,12 @@ if file_excel:
 
             total_before = len(df)
             rows_to_keep = []
-            warn_indices = []  # Chỉ lưu duy nhất vị trí các dòng BỊ CẢNH BÁO
+            warn_indices = []
             deleted_rows_log = []
-            current_year = 2026
+            current_year = datetime.now().year
 
             # ==========================================
-            # XỬ LÝ MẪU CT03 (GIẤY RA VIỆN)
+            # XỬ LÝ MẪU CT03
             # ==========================================
             if "CT03" in option_mau:
                 for idx in df.index:
@@ -125,8 +135,11 @@ if file_excel:
                         df.at[idx, 'TEKT'] = '0'
 
                     cccd_raw = df.at[idx, 'SO_CCCD'] if 'SO_CCCD' in df.columns else ''
-                    cccd_val = format_cccd(cccd_raw)
+                    cccd_val, is_valid_cccd = process_cccd(cccd_raw)
                     df.at[idx, 'SO_CCCD'] = cccd_val
+
+                    if cccd_raw and not is_valid_cccd:
+                        is_warning = True
 
                     new_lg = '1' if cccd_val else '0'
                     if 'LOAI_GIAYTO' in df.columns:
@@ -138,7 +151,6 @@ if file_excel:
                     if 'NGAYCAP_CCCD' in df.columns and df.at[idx, 'NGAYCAP_CCCD']:
                         df.at[idx, 'NGAYCAP_CCCD'] = format_to_yyyymmdd(df.at[idx, 'NGAYCAP_CCCD'])
 
-                    # 🎯 CHỈ BÁO CẢNH BÁO KHI: Trẻ dưới 7 tuổi bị trống cả Họ tên Cha lẫn Mẹ
                     birth_str = df.at[idx, 'NGAY_SINH'] if 'NGAY_SINH' in df.columns else ''
                     birth_year, _ = parse_birth_date(birth_str)
                     if birth_year:
@@ -154,7 +166,7 @@ if file_excel:
                         warn_indices.append(idx)
 
             # ==========================================
-            # XỬ LÝ MẪU CT07 (GIẤY NGHỈ VIỆC HƯỞNG BHXH)
+            # XỬ LÝ MẪU CT07
             # ==========================================
             else:
                 df['MAU_SO'] = 'CT07'
@@ -167,7 +179,7 @@ if file_excel:
                         df.at[idx, 'NGAYCAP_CCCD'] = format_to_yyyymmdd(df.at[idx, 'NGAYCAP_CCCD'])
 
                     cccd_raw = df.at[idx, 'SO_CCCD'] if 'SO_CCCD' in df.columns else ''
-                    cccd_val = format_cccd(cccd_raw)
+                    cccd_val, is_valid_cccd = process_cccd(cccd_raw)
                     
                     if cccd_val:
                         df.at[idx, 'SO_CCCD'] = cccd_val
@@ -175,7 +187,7 @@ if file_excel:
                     else:
                         has_cccd = False
 
-                    if not has_cccd:
+                    if not has_cccd or not is_valid_cccd:
                         text_cha = df.at[idx, 'HO_TEN_CHA'] if 'HO_TEN_CHA' in df.columns else ''
                         text_me = df.at[idx, 'HO_TEN_ME'] if 'HO_TEN_ME' in df.columns else ''
                         
@@ -184,7 +196,8 @@ if file_excel:
                             cccd_ext, date_ext = extract_cccd_and_date(text_me)
                         
                         if cccd_ext:
-                            df.at[idx, 'SO_CCCD'] = format_cccd(cccd_ext)
+                            df.at[idx, 'SO_CCCD'] = cccd_ext
+                            is_valid_cccd = True
                             if date_ext and ('NGAYCAP_CCCD' in df.columns):
                                 df.at[idx, 'NGAYCAP_CCCD'] = date_ext
                             has_cccd = True
@@ -200,8 +213,8 @@ if file_excel:
                         })
                         continue
 
-                    # 🎯 CHỈ BÁO CẢNH BÁO KHI: CCCD không đủ 12 số
-                    if len(curr_cccd) != 12:
+                    # Báo cảnh báo nếu chứa chữ cái hoặc không đúng chuẩn 12 số
+                    if not is_valid_cccd or len(curr_cccd) != 12 or re.search(r'\D', curr_cccd):
                         is_warning = True
 
                     elif 'NGAYCAP_CCCD' in df.columns:
@@ -224,16 +237,20 @@ if file_excel:
             df_clean = df.loc[rows_to_keep].copy()
             df_clean['STT'] = [str(i) for i in range(1, len(df_clean) + 1)]
 
-            # Lưu vào Session State
+            # Lưu lại trạng thái ban đầu của các dòng cảnh báo để so sánh chỉnh sửa
+            df_original_warn = df_clean.loc[warn_indices].copy() if warn_indices else pd.DataFrame()
+
             st.session_state['df_clean'] = df_clean
+            st.session_state['df_original_warn'] = df_original_warn
             st.session_state['warn_indices'] = warn_indices
             st.session_state['deleted_rows_log'] = deleted_rows_log
             st.session_state['total_before'] = total_before
             st.session_state['option_mau'] = option_mau
 
-# KHU VỰC CHỈNH SỬA
+# KHU VỰC CHỈNH SỬA VÀ HIỂN THỊ
 if 'df_clean' in st.session_state:
     df_clean = st.session_state['df_clean']
+    df_original_warn = st.session_state['df_original_warn']
     warn_indices = st.session_state['warn_indices']
     deleted_rows_log = st.session_state['deleted_rows_log']
     total_before = st.session_state['total_before']
@@ -246,23 +263,25 @@ if 'df_clean' in st.session_state:
     c2.metric("🗑️ Dòng bị xóa", f"{len(deleted_rows_log)} dòng")
     c3.metric("⚠️ Dòng bị cảnh báo cần sửa", f"{len(warn_indices)} dòng")
 
-    tab_edit, tab_del = st.tabs(["✏️ 1. Sửa Trực Tiếp Dòng Cảnh Báo", "🗑️ 2. Danh Sách Dòng Bị Xóa"])
+    # Tạo 3 Tabs giao diện
+    tab_edit, tab_del, tab_history = st.tabs([
+        "✏️ 1. Sửa Trực Tiếp Dòng Cảnh Báo", 
+        "🗑️ 2. Danh Sách Dòng Bị Xóa", 
+        "📝 3. Nhật Ký Các Dòng Đã Chỉnh Sửa"
+    ])
 
     with tab_edit:
-        # Lọc CHÍNH XÁC chỉ các dòng bị CẢNH BÁO
         valid_warn_indices = [i for i in warn_indices if i in df_clean.index]
         
         if valid_warn_indices:
-            st.warning(f"⚠️ Phát hiện **{len(valid_warn_indices)} dòng bị cảnh báo** (Trẻ <7t thiếu thông tin Bố/Mẹ hoặc CCCD không đủ 12 số). Bạn nhấp đúp vào ô tương ứng để bổ sung/sửa lại trực tiếp!")
+            st.warning(f"⚠️ Phát hiện **{len(valid_warn_indices)} dòng bị cảnh báo** (CCCD chứa ký tự/không đủ 12 số, hoặc trẻ <7t thiếu Bố/Mẹ). Nhấp đúp vào ô để sửa trực tiếp!")
             
-            # Chỉ lấy các dòng bị cảnh báo ra bảng sửa
             df_warn = df_clean.loc[valid_warn_indices].copy()
-            
-            # Bảng hiển thị sửa trực tiếp
             edited_warn = st.data_editor(df_warn, use_container_width=True, key="warn_editor")
             
-            # Cập nhật kết quả vừa gõ sửa vào DataFrame chính
+            # Cập nhật thay đổi vào df_clean
             df_clean.update(edited_warn)
+            st.session_state['df_clean'] = df_clean
         else:
             st.success("🎉 Tất cả dữ liệu đều đầy đủ thông tin, không có dòng nào bị cảnh báo!")
 
@@ -272,14 +291,42 @@ if 'df_clean' in st.session_state:
         else:
             st.info("Không có dòng nào bị xóa!")
 
-    # Tạo tên file
+    with tab_history:
+        # Tự động ghi nhận và so sánh sự thay đổi giữa dữ liệu gốc & dữ liệu đã sửa
+        edit_logs = []
+        if not df_original_warn.empty:
+            for idx in df_original_warn.index:
+                row_orig = df_original_warn.loc[idx]
+                row_curr = df_clean.loc[idx]
+                
+                changes = []
+                for col in df_clean.columns:
+                    val_orig = str(row_orig[col])
+                    val_curr = str(row_curr[col])
+                    if val_orig != val_curr:
+                        changes.append(f"Cột **{col}**: '{val_orig}' ➔ '{val_curr}'")
+                
+                if changes:
+                    edit_logs.append({
+                        'STT': row_curr.get('STT', str(idx + 1)),
+                        'Họ và Tên': row_curr.get('HO_TEN', ''),
+                        'Mã BHXH': row_curr.get('MA_SOBHXH', ''),
+                        'Nội dung chỉnh sửa': "; ".join(changes)
+                    })
+
+        if edit_logs:
+            st.subheader("📋 Chi tiết các ô vừa được thao tác chỉnh sửa:")
+            st.dataframe(pd.DataFrame(edit_logs), use_container_width=True)
+        else:
+            st.info("Chưa có thao tác chỉnh sửa nào trên bảng dòng cảnh báo.")
+
+    # Tạo tên file & Tải về
     date_suffix = get_clean_date_str(df_clean)
     if date_suffix:
         output_filename = f"GiayRaVien_BHXH_{date_suffix}.xlsx" if "CT03" in option_mau else f"GiayChungNhan_BHXH_{date_suffix}.xlsx"
     else:
         output_filename = "GiayRaVien_BHXH_DaChuanHoa.xlsx" if "CT03" in option_mau else "GiayChungNhan_BHXH_DaChuanHoa.xlsx"
 
-    # Xuất file Excel đã đồng bộ
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_clean.to_excel(writer, sheet_name='Dulieu_DaChuanHoa', index=False)
