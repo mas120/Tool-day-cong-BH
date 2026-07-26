@@ -20,8 +20,8 @@ def clean_cccd_raw(cccd_str):
         val = val[:-2]
     return val
 
-# Hàm kiểm tra và xử lý định dạng CCCD
-def process_cccd(cccd_str):
+# Hàm kiểm tra và xử lý định dạng CCCD / CMND
+def process_cccd(cccd_str, allow_cmnd_9_digits=False):
     raw_val = clean_cccd_raw(cccd_str)
     if not raw_val:
         return "", False  # Trống -> Không hợp lệ
@@ -30,9 +30,16 @@ def process_cccd(cccd_str):
     if re.search(r'\D', raw_val):
         return raw_val, False
         
+    # Trường hợp CCCD 12 số chuẩn
     if len(raw_val) == 12:
         return raw_val, True
+    
+    # Trường hợp CMND 9 số cũ (Dành riêng cho CT03)
+    elif len(raw_val) == 9 and allow_cmnd_9_digits:
+        return raw_val, True
+        
     elif 0 < len(raw_val) < 12:
+        # Nếu không phải 9 số chuẩn ở CT03 thì vẫn pad số 0 nhưng đánh dấu False để kiểm tra
         return raw_val.zfill(12), False
     else:
         return raw_val, False
@@ -157,11 +164,14 @@ if file_excel:
                         log_auto_fix(idx, 'TEKT', old_tekt, '0', 'Mặc định gán TEKT = 0')
 
                     cccd_raw = str(df.at[idx, 'SO_CCCD']) if 'SO_CCCD' in df.columns else ''
-                    cccd_val, is_valid_cccd = process_cccd(cccd_raw)
-                    if cccd_raw != cccd_val:
+                    # Cho phép CMND 9 số ở Giấy ra viện (CT03)
+                    cccd_val, is_valid_cccd = process_cccd(cccd_raw, allow_cmnd_9_digits=True)
+                    
+                    if cccd_raw != cccd_val and not (len(cccd_raw) == 9 and cccd_raw.isdigit()):
                         log_auto_fix(idx, 'SO_CCCD', cccd_raw, cccd_val, 'Chuẩn hóa định dạng CCCD (Tự động thêm 0 cho đủ 12 số)')
                     df.at[idx, 'SO_CCCD'] = cccd_val
 
+                    # Chỉ cảnh báo nếu cccd_raw có dữ liệu nhưng không hợp lệ (không phải 12 số cũng không phải 9 số)
                     if cccd_raw and not is_valid_cccd:
                         is_warning = True
 
@@ -169,7 +179,7 @@ if file_excel:
                     if 'LOAI_GIAYTO' in df.columns and str(df.at[idx, 'LOAI_GIAYTO']) != new_lg:
                         old_lg = str(df.at[idx, 'LOAI_GIAYTO'])
                         df.at[idx, 'LOAI_GIAYTO'] = new_lg
-                        log_auto_fix(idx, 'LOAI_GIAYTO', old_lg, new_lg, f"Gán loại giấy tờ ({'1: Có CCCD' if new_lg=='1' else '0: Không CCCD'})")
+                        log_auto_fix(idx, 'LOAI_GIAYTO', old_lg, new_lg, f"Gán loại giấy tờ ({'1: Có CCCD/CMND' if new_lg=='1' else '0: Không CCCD/CMND'})")
 
                     if 'SO_SERI' in df.columns and df.at[idx, 'SO_SERI']:
                         old_seri = str(df.at[idx, 'SO_SERI'])
@@ -217,7 +227,8 @@ if file_excel:
                             log_auto_fix(idx, 'NGAYCAP_CCCD', old_ngaycap, new_ngaycap, 'Chuyển định dạng ngày sang YYYYMMDD')
 
                     cccd_raw = str(df.at[idx, 'SO_CCCD']) if 'SO_CCCD' in df.columns else ''
-                    cccd_val, is_valid_cccd = process_cccd(cccd_raw)
+                    # CT07 yêu cầu chuẩn CCCD 12 số
+                    cccd_val, is_valid_cccd = process_cccd(cccd_raw, allow_cmnd_9_digits=False)
                     
                     if cccd_val:
                         if cccd_raw != cccd_val:
@@ -322,7 +333,6 @@ if 'df_clean' in st.session_state:
         if valid_warn_indices:
             st.warning(f"⚠️ Phát hiện **{len(valid_warn_indices)} dòng bị cảnh báo**. Nhấp đúp vào ô để sửa trực tiếp, hoặc chọn các dòng cần loại bỏ bên dưới.")
             
-            # CHỨC NĂNG XÓA DÒNG CẢNH BÁO
             col_del_select, col_del_btn = st.columns([3, 1])
             
             options_dict = {}
