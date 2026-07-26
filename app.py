@@ -33,7 +33,6 @@ def process_cccd(cccd_str):
     if len(raw_val) == 12:
         return raw_val, True
     elif 0 < len(raw_val) < 12:
-        # Tự động pad số 0 vào đầu nhưng vẫn đánh dấu là cần kiểm tra nếu bản gốc thiếu số
         return raw_val.zfill(12), False
     else:
         return raw_val, False
@@ -116,13 +115,13 @@ if file_excel:
             rows_to_keep = []
             warn_indices = []
             deleted_rows_log = []
-            auto_clean_logs = []  # Lưu lại nhật ký Tool tự động chuẩn hóa
+            auto_clean_logs = []
             current_year = datetime.now().year
 
-            def log_auto_fix(idx, col_name, old_val, new_val, reason):
-                stt_str = str(df.at[idx, 'STT']) if 'STT' in df.columns else str(idx + 1)
-                name_str = str(df.at[idx, 'HO_TEN']) if 'HO_TEN' in df.columns else ''
-                bhxh_str = str(df.at[idx, 'MA_SOBHXH']) if 'MA_SOBHXH' in df.columns else ''
+            def log_auto_fix(idx_val, col_name, old_val, new_val, reason):
+                stt_str = str(df.at[idx_val, 'STT']) if 'STT' in df.columns else str(idx_val + 1)
+                name_str = str(df.at[idx_val, 'HO_TEN']) if 'HO_TEN' in df.columns else ''
+                bhxh_str = str(df.at[idx_val, 'MA_SOBHXH']) if 'MA_SOBHXH' in df.columns else ''
                 auto_clean_logs.append({
                     'STT Gốc': stt_str,
                     'Họ và Tên': name_str,
@@ -152,13 +151,11 @@ if file_excel:
                         })
                         continue
                     
-                    # Sửa TEKT -> '0'
                     if 'TEKT' in df.columns and str(df.at[idx, 'TEKT']) != '0':
                         old_tekt = str(df.at[idx, 'TEKT'])
                         df.at[idx, 'TEKT'] = '0'
                         log_auto_fix(idx, 'TEKT', old_tekt, '0', 'Mặc định gán TEKT = 0')
 
-                    # Chuẩn hóa CCCD
                     cccd_raw = str(df.at[idx, 'SO_CCCD']) if 'SO_CCCD' in df.columns else ''
                     cccd_val, is_valid_cccd = process_cccd(cccd_raw)
                     if cccd_raw != cccd_val:
@@ -168,14 +165,12 @@ if file_excel:
                     if cccd_raw and not is_valid_cccd:
                         is_warning = True
 
-                    # Cập nhật LOAI_GIAYTO
                     new_lg = '1' if cccd_val else '0'
                     if 'LOAI_GIAYTO' in df.columns and str(df.at[idx, 'LOAI_GIAYTO']) != new_lg:
                         old_lg = str(df.at[idx, 'LOAI_GIAYTO'])
                         df.at[idx, 'LOAI_GIAYTO'] = new_lg
                         log_auto_fix(idx, 'LOAI_GIAYTO', old_lg, new_lg, f"Gán loại giấy tờ ({'1: Có CCCD' if new_lg=='1' else '0: Không CCCD'})")
 
-                    # Sửa SO_SERI 2600 -> 260
                     if 'SO_SERI' in df.columns and df.at[idx, 'SO_SERI']:
                         old_seri = str(df.at[idx, 'SO_SERI'])
                         new_seri = re.sub(r'2600', '260', old_seri)
@@ -183,7 +178,6 @@ if file_excel:
                             df.at[idx, 'SO_SERI'] = new_seri
                             log_auto_fix(idx, 'SO_SERI', old_seri, new_seri, 'Chuyển mã seri từ 2600 thành 260')
 
-                    # Chuẩn hóa Ngày cấp CCCD
                     if 'NGAYCAP_CCCD' in df.columns and df.at[idx, 'NGAYCAP_CCCD']:
                         old_ngaycap = str(df.at[idx, 'NGAYCAP_CCCD'])
                         new_ngaycap = format_to_yyyymmdd(old_ngaycap)
@@ -191,7 +185,6 @@ if file_excel:
                             df.at[idx, 'NGAYCAP_CCCD'] = new_ngaycap
                             log_auto_fix(idx, 'NGAYCAP_CCCD', old_ngaycap, new_ngaycap, 'Chuyển định dạng ngày sang YYYYMMDD')
 
-                    # Kiểm tra trẻ dưới 7 tuổi
                     birth_str = str(df.at[idx, 'NGAY_SINH']) if 'NGAY_SINH' in df.columns else ''
                     birth_year, _ = parse_birth_date(birth_str)
                     if birth_year:
@@ -234,7 +227,6 @@ if file_excel:
                     else:
                         has_cccd = False
 
-                    # Trích xuất CCCD từ Cha / Mẹ nếu bị trống
                     if not has_cccd or not is_valid_cccd:
                         text_cha = str(df.at[idx, 'HO_TEN_CHA']) if 'HO_TEN_CHA' in df.columns else ''
                         text_me = str(df.at[idx, 'HO_TEN_ME']) if 'HO_TEN_ME' in df.columns else ''
@@ -266,7 +258,6 @@ if file_excel:
                         })
                         continue
 
-                    # Cảnh báo nếu chứa chữ cái hoặc không đủ 12 số
                     if not is_valid_cccd or len(curr_cccd) != 12 or re.search(r'\D', curr_cccd):
                         is_warning = True
 
@@ -293,7 +284,6 @@ if file_excel:
             df_clean = df.loc[rows_to_keep].copy()
             df_clean['STT'] = [str(i) for i in range(1, len(df_clean) + 1)]
 
-            # Lưu dữ liệu vào Session State
             st.session_state['df_clean'] = df_clean
             st.session_state['warn_indices'] = warn_indices
             st.session_state['deleted_rows_log'] = deleted_rows_log
@@ -312,7 +302,7 @@ if 'df_clean' in st.session_state:
 
     st.success("✅ Đã xử lý chuẩn hóa dữ liệu thành công!")
 
-    # Lọc lại các index cảnh báo an toàn còn tồn tại trong df_clean
+    # Lọc lại danh sách warn_indices đảm bảo index tồn tại trong df_clean
     valid_warn_indices = [i for i in warn_indices if i in df_clean.index]
 
     c1, c2, c3, c4 = st.columns(4)
@@ -336,32 +326,36 @@ if 'df_clean' in st.session_state:
             col_del_select, col_del_btn = st.columns([3, 1])
             
             options_dict = {}
-            for warn_idx in valid_warn_indices:
-                if warn_idx in df_clean.index:
-                    stt_val = str(df_clean.at[warn_idx, 'STT']) if 'STT' in df_clean.columns else str(warn_idx + 1)
-                    name_val = str(df_clean.at[warn_idx, 'HO_TEN']) if 'HO_TEN' in df_clean.columns else ''
-                    bhxh_val = str(df_clean.at[warn_idx, 'MA_SOBHXH']) if 'MA_SOBHXH' in df.columns else ''
+            for w_idx in valid_warn_indices:
+                if w_idx in df_clean.index:
+                    row_data = df_clean.loc[w_idx]
+                    stt_val = str(row_data.get('STT', w_idx + 1))
+                    name_val = str(row_data.get('HO_TEN', ''))
+                    bhxh_val = str(row_data.get('MA_SOBHXH', ''))
                     label = f"STT {stt_val} - {name_val} (BHXH: {bhxh_val})"
-                    options_dict[label] = warn_idx
+                    options_dict[label] = w_idx
 
             selected_labels = col_del_select.multiselect(
                 "🗑️ Chọn các dòng cảnh báo muốn XÓA:",
                 options=list(options_dict.keys()),
-                placeholder="Chọn một hoặc nhiều dòng để xóa..."
+                placeholder="Chọn một hoặc nhiều dòng để xóa...",
+                key="select_rows_to_delete"
             )
 
             if col_del_btn.button("🔥 Xóa Dòng Đã Chọn", type="secondary"):
                 if selected_labels:
-                    indices_to_remove = [options_dict[lbl] for lbl in selected_labels]
+                    indices_to_remove = [options_dict[lbl] for lbl in selected_labels if lbl in options_dict]
                     
                     for idx_rem in indices_to_remove:
-                        deleted_rows_log.append({
-                            'STT Gốc': str(df_clean.at[idx_rem, 'STT']) if 'STT' in df_clean.columns else str(idx_rem + 1),
-                            'Họ và Tên': str(df_clean.at[idx_rem, 'HO_TEN']) if 'HO_TEN' in df_clean.columns else '',
-                            'Mã BHXH': str(df_clean.at[idx_rem, 'MA_SOBHXH']) if 'MA_SOBHXH' in df.columns else '',
-                            'Mã Thẻ': str(df_clean.at[idx_rem, 'MA_THE']) if 'MA_THE' in df.columns else '',
-                            'Lý do xóa': 'Xóa thủ công từ danh sách cảnh báo'
-                        })
+                        if idx_rem in df_clean.index:
+                            row_rem = df_clean.loc[idx_rem]
+                            deleted_rows_log.append({
+                                'STT Gốc': str(row_rem.get('STT', idx_rem + 1)),
+                                'Họ và Tên': str(row_rem.get('HO_TEN', '')),
+                                'Mã BHXH': str(row_rem.get('MA_SOBHXH', '')),
+                                'Mã Thẻ': str(row_rem.get('MA_THE', '')),
+                                'Lý do xóa': 'Xóa thủ công từ danh sách cảnh báo'
+                            })
                     
                     df_clean.drop(index=indices_to_remove, inplace=True)
                     df_clean['STT'] = [str(i) for i in range(1, len(df_clean) + 1)]
